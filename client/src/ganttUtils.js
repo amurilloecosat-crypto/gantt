@@ -45,6 +45,24 @@ export function isDescendant(candidateId, ancestorId, tasks) {
   return false;
 }
 
+export function hasChildren(taskId, tasks) {
+  return tasks.some((t) => t.parentId === taskId);
+}
+
+export function getAncestorIds(taskId, tasks) {
+  const byId = {};
+  tasks.forEach((t) => (byId[t.id] = t));
+  const ancestors = [];
+  let cur = byId[taskId];
+  const seen = new Set();
+  while (cur && cur.parentId && byId[cur.parentId] && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    ancestors.push(cur.parentId);
+    cur = byId[cur.parentId];
+  }
+  return ancestors;
+}
+
 export function getSubtreeIndices(index, tasks) {
   const rootId = tasks[index].id;
   const indices = [index];

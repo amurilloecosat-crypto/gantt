@@ -1,18 +1,12 @@
-const TOKEN_KEY = 'sidon_gantt_token';
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token) {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
-}
+import { supabase } from './supabaseClient';
 
 async function request(path, options = {}) {
-  const token = getToken();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
 
   const res = await fetch(`/api${path}`, { ...options, headers });
 
@@ -36,10 +30,6 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  register: (data) => request('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
-  login: (data) => request('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
-  me: () => request('/auth/me'),
-
   listProjects: () => request('/projects'),
   createProject: (data) => request('/projects', { method: 'POST', body: JSON.stringify(data) }),
   getProject: (id) => request(`/projects/${id}`),

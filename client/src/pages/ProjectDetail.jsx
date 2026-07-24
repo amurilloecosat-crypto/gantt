@@ -8,7 +8,7 @@ import GanttTable from '../components/GanttTable.jsx';
 import ColorPicker from '../components/ColorPicker.jsx';
 import { api } from '../api';
 import { colors, fonts } from '../theme.js';
-import { computeProjectEndDateLabel, getSubtreeIndices, isDescendant, taskLevel } from '../ganttUtils.js';
+import { computeProjectEndDateLabel, getSubtreeIndices, hasChildren, taskLevel } from '../ganttUtils.js';
 
 const TIME_UNITS = ['Días', 'Semanas', 'Meses'];
 
@@ -33,6 +33,7 @@ export default function ProjectDetail() {
   const [draggingTaskId, setDraggingTaskId] = useState(null);
   const [colorPickerFor, setColorPickerFor] = useState(null);
   const [colorPickerPos, setColorPickerPos] = useState({ x: 0, y: 0 });
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const exportRef = useRef(null);
   const saveTimeout = useRef(null);
   const dragSourceId = useRef(null);
@@ -131,7 +132,8 @@ export default function ProjectDetail() {
 
       const sourceTask = tasks[sourceIndex];
       const targetTask = tasks[targetIndex];
-      if (sourceTask.parentId !== null && targetTask.parentId !== sourceTask.parentId) return prev;
+      const sourceIsParent = sourceTask.parentId !== null || hasChildren(sourceTask.id, tasks);
+      if (sourceIsParent && targetTask.parentId !== sourceTask.parentId) return prev;
 
       const block = subtreeIdx.map((i) => tasks[i]);
       const remaining = tasks.filter((_, i) => !subtreeIdx.includes(i));
@@ -177,6 +179,15 @@ export default function ProjectDetail() {
     const idx = project.tasks.findIndex((t) => t.id === taskId);
     if (idx !== -1) updateTask(idx, { color });
     setColorPickerFor(null);
+  }
+
+  function toggleCollapse(taskId) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
   }
 
   async function exportPng() {
@@ -313,6 +324,8 @@ export default function ProjectDetail() {
             startDate={project.startDate}
             excludeWeekends={project.excludeWeekends}
             draggingTaskId={draggingTaskId}
+            collapsedIds={collapsedIds}
+            onToggleCollapse={toggleCollapse}
             onUpdateTask={updateTask}
             onAddTask={addTask}
             onAddSubtask={addSubtask}

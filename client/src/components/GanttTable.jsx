@@ -3,7 +3,9 @@ import { colors, fonts } from '../theme.js';
 import {
   computeNumbers,
   computeSchedule,
+  getAncestorIds,
   getRootAncestorColor,
+  hasChildren,
   lightenColor,
   taskLevel,
 } from '../ganttUtils.js';
@@ -24,6 +26,8 @@ export default function GanttTable({
   startDate,
   excludeWeekends,
   draggingTaskId,
+  collapsedIds,
+  onToggleCollapse,
   onUpdateTask,
   onAddTask,
   onAddSubtask,
@@ -102,7 +106,13 @@ export default function GanttTable({
         </div>
 
         {scheduled.map((t, i) => {
+          const ancestorIds = getAncestorIds(t.id, tasks);
+          const isHiddenByCollapse = ancestorIds.some((aid) => collapsedIds.has(aid));
+          if (isHiddenByCollapse) return null;
+
           const level = taskLevel(t.id, tasks);
+          const isParent = hasChildren(t.id, tasks);
+          const isCollapsed = collapsedIds.has(t.id);
           const depOptions = [{ value: '', label: 'Ninguna' }].concat(
             tasks.map((o, oi) => ({ value: o.id, label: numbers[oi] })).filter((o) => o.value !== t.id)
           );
@@ -142,6 +152,40 @@ export default function GanttTable({
                 {numbers[i]}
               </div>
               <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {isParent && (
+                  <button
+                    onClick={() => onToggleCollapse(t.id)}
+                    title={isCollapsed ? 'Expandir' : 'Plegar'}
+                    style={{
+                      flexShrink: 0,
+                      width: '20px',
+                      height: '20px',
+                      marginLeft: level * 28 + 'px',
+                      border: 'none',
+                      background: 'transparent',
+                      color: colors.textMuted,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 0,
+                    }}
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.75"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'none', transition: 'transform .1s ease' }}
+                    >
+                      <path d="M2 3.5 L5 6.5 L8 3.5" />
+                    </svg>
+                  </button>
+                )}
                 <input
                   type="text"
                   value={t.name}
@@ -151,14 +195,14 @@ export default function GanttTable({
                     minWidth: 0,
                     boxSizing: 'border-box',
                     padding: '6px 8px',
-                    paddingLeft: level * 28 + 8 + 'px',
+                    paddingLeft: (isParent ? 8 : level * 28 + 8) + 'px',
                     border: `1.5px solid ${colors.border}`,
                     borderRadius: '8px',
                     fontFamily: fonts.body,
                     fontSize: '14px',
                     color: level > 0 ? colors.primaryDark : colors.text,
                     background: level > 0 ? '#F0F8F5' : colors.surface,
-                    marginLeft: (level > 0 ? level * 10 : 0) + 'px',
+                    marginLeft: (!isParent && level > 0 ? level * 10 : 0) + 'px',
                   }}
                 />
                 {level < 2 && (

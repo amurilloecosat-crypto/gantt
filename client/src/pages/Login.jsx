@@ -28,6 +28,7 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [busy, setBusy] = useState(false);
   const { login, register } = useAuth();
   const navigate = useNavigate();
@@ -35,14 +36,21 @@ export default function Login() {
   async function onSubmit(e) {
     e.preventDefault();
     setError('');
+    setInfo('');
     setBusy(true);
     try {
       if (mode === 'login') {
         await login(email, password);
+        navigate('/', { replace: true });
       } else {
-        await register(name, email, password);
+        const { needsEmailConfirmation } = await register(name, email, password);
+        if (needsEmailConfirmation) {
+          setInfo('Revisa tu correo para confirmar la cuenta antes de iniciar sesión.');
+          setMode('login');
+        } else {
+          navigate('/', { replace: true });
+        }
       }
-      navigate('/', { replace: true });
     } catch (err) {
       setError(err.message || 'Ocurrió un error');
     } finally {
@@ -109,6 +117,9 @@ export default function Login() {
 
             {error && (
               <div style={{ color: '#DC2626', fontSize: '13px', marginBottom: '12px', marginTop: '8px' }}>{error}</div>
+            )}
+            {info && (
+              <div style={{ color: colors.primaryDark, fontSize: '13px', marginBottom: '12px', marginTop: '8px' }}>{info}</div>
             )}
 
             <button
