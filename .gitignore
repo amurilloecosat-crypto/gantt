@@ -1,0 +1,7 @@
+node_modules
+dist
+*.log
+
+# Documentos personales no relacionados con el código
+Quién lo usa.docx
+~$ién lo usa.docx

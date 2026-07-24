@@ -1,0 +1,29 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #F5F8F7;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+a {
+  color: #0D553F;
+}
+a:hover {
+  color: #00A887;
+}
+
+button {
+  font-family: inherit;
+}
+
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9BAAA4;
+}
