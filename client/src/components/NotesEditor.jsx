@@ -34,7 +34,7 @@ export default function NotesEditor({ initialHtml, attachmentName, onBlurSave, o
     <div style={{ maxWidth: '640px', marginBottom: '18px' }}>
       <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Notas</label>
       <div style={{ border: `1.5px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '6px 8px', background: colors.bg, borderBottom: `1px solid ${colors.border}` }}>
+        <div data-export="notes-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '6px 8px', background: colors.bg, borderBottom: `1px solid ${colors.border}` }}>
           <button onMouseDown={(e) => { e.preventDefault(); exec('bold'); }} title="Negritas" style={{ ...toolBtnStyle, font: `700 14px ${fonts.body}`, color: colors.text }}>B</button>
           <button onMouseDown={(e) => { e.preventDefault(); exec('italic'); }} title="Cursiva" style={{ ...toolBtnStyle, font: `italic 700 14px ${fonts.body}`, color: colors.text }}>I</button>
           <button onMouseDown={(e) => { e.preventDefault(); exec('underline'); }} title="Subrayado" style={{ ...toolBtnStyle, font: `700 14px ${fonts.body}`, color: colors.text, textDecoration: 'underline' }}>U</button>

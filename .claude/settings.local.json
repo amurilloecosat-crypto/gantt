@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npm run *)",
       "Bash(taskkill //PID 24272 //F)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(wc -c \"/c/Users/Alex Murillo/.claude/projects/C--Users-Alex-Murillo-Documents-ALEX-ALEX-PROYECTO-GANTT/55bc8fe3-fb97-466b-b92d-3f1073e63ef7/tool-results/toolu_01Mt7qkgXXEbqTz6BS5UAazh.txt\")",
+      "Bash(netstat -ano)"
     ]
   }
 }

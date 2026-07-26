@@ -26,6 +26,7 @@ function serialize(row) {
     notesHtml: row.notes_html || '',
     notesAttachmentName: row.notes_attachment_name || '',
     tasks: row.tasks || [],
+    deliverables: row.deliverables || [],
     lastModified: formatDate(row.updated_at),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -80,6 +81,7 @@ router.put('/:id', async (req, res) => {
   if (body.notesHtml !== undefined) patch.notes_html = String(body.notesHtml);
   if (body.notesAttachmentName !== undefined) patch.notes_attachment_name = String(body.notesAttachmentName);
   if (body.tasks !== undefined) patch.tasks = body.tasks;
+  if (body.deliverables !== undefined) patch.deliverables = body.deliverables;
   patch.updated_at = new Date().toISOString();
 
   const { data, error } = await supabaseAdmin

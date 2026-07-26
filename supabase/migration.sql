@@ -10,6 +10,7 @@ create table if not exists public.projects (
   notes_html text default '',
   notes_attachment_name text default '',
   tasks jsonb not null default '[]'::jsonb,
+  deliverables jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

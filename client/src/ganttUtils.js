@@ -119,10 +119,73 @@ export function formatDate(date) {
 }
 
 export function computeSchedule(tasks) {
+  // Las subtareas se acotan siempre al rango de su tarea padre ya calculada.
+  const byId = {};
   return tasks.map((t) => {
-    const start = typeof t.manualStart === 'number' ? t.manualStart : 0;
-    const end = start + Number(t.duration || 0);
-    return { ...t, start, end };
+    const duration = Number(t.duration || 0);
+    let start = typeof t.manualStart === 'number' ? t.manualStart : 0;
+    let end = start + duration;
+    const parent = t.parentId ? byId[t.parentId] : null;
+    if (parent) {
+      const maxStart = Math.max(parent.start, parent.end - duration);
+      start = Math.min(Math.max(start, parent.start), maxStart);
+      end = start + duration;
+      if (end > parent.end) {
+        end = parent.end;
+        start = Math.max(parent.start, end - duration);
+      }
+    }
+    const result = { ...t, start, end };
+    byId[t.id] = result;
+    return result;
+  });
+}
+
+export function getParentBounds(taskId, tasks) {
+  const byId = {};
+  tasks.forEach((t) => (byId[t.id] = t));
+  const task = byId[taskId];
+  if (!task || !task.parentId || !byId[task.parentId]) return null;
+  const scheduled = computeSchedule(tasks);
+  const parent = scheduled.find((t) => t.id === task.parentId);
+  return parent ? { start: parent.start, end: parent.end } : null;
+}
+
+const ORDINAL_LABELS = { 1: '1er', 2: '2do', 3: '3er', 4: '4to', 5: '5to', 6: '6to', 7: '7mo', 8: '8vo', 9: '9no', 10: '10mo', 11: '11vo', 12: '12vo' };
+
+export function ordinalLabel(n) {
+  return ORDINAL_LABELS[n] || `${n}º`;
+}
+
+export function buildMiniGanttRows(tasks) {
+  if (!tasks || !tasks.length) return [];
+  const scheduled = computeSchedule(tasks);
+  const maxEnd = Math.max(1, ...scheduled.map((t) => t.end));
+  const cellPct = 100 / maxEnd;
+  const gridImage = `repeating-linear-gradient(to right, transparent 0, transparent ${cellPct - 2}%, #ECF1EF ${cellPct - 2}%, #ECF1EF ${cellPct}%)`;
+  return scheduled.slice(0, 6).map((t) => {
+    const level = taskLevel(t.id, tasks);
+    const color = level === 0 ? getRootAncestorColor(t, tasks) : lightenColor(getRootAncestorColor(t, tasks), 0.55);
+    return {
+      gridImage,
+      nameStyle: {
+        width: (level > 0 ? 26 : 34) + 'px',
+        marginLeft: level * 6 + 'px',
+        height: '8px',
+        borderRadius: '2px',
+        background: '#E2E8E5',
+        flexShrink: 0,
+      },
+      barStyle: {
+        position: 'absolute',
+        top: 0,
+        left: (t.start / maxEnd) * 100 + '%',
+        width: Math.max(6, (t.duration / maxEnd) * 100) + '%',
+        height: '10px',
+        borderRadius: '3px',
+        background: color,
+      },
+    };
   });
 }
 

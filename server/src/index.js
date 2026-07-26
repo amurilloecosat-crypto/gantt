@@ -15,5 +15,5 @@ app.use((req, res) => res.status(404).json({ error: 'No encontrado' }));
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`Sidón Gantt API escuchando en http://localhost:${PORT}`);
+  console.log(`GanttNoso API escuchando en http://localhost:${PORT}`);
 });

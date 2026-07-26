@@ -5,10 +5,11 @@ import { jsPDF } from 'jspdf';
 import Header from '../components/Header.jsx';
 import NotesEditor from '../components/NotesEditor.jsx';
 import GanttTable from '../components/GanttTable.jsx';
+import DeliverablesTable from '../components/DeliverablesTable.jsx';
 import ColorPicker from '../components/ColorPicker.jsx';
 import { api } from '../api';
 import { colors, fonts } from '../theme.js';
-import { computeProjectEndDateLabel, getSubtreeIndices, hasChildren, taskLevel } from '../ganttUtils.js';
+import { computeProjectEndDateLabel, getParentBounds, getSubtreeIndices, hasChildren, taskLevel } from '../ganttUtils.js';
 
 const TIME_UNITS = ['Días', 'Semanas', 'Meses'];
 
@@ -31,18 +32,20 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [draggingTaskId, setDraggingTaskId] = useState(null);
+  const [draggingDeliverableId, setDraggingDeliverableId] = useState(null);
   const [colorPickerFor, setColorPickerFor] = useState(null);
   const [colorPickerPos, setColorPickerPos] = useState({ x: 0, y: 0 });
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const exportRef = useRef(null);
   const saveTimeout = useRef(null);
   const dragSourceId = useRef(null);
+  const dragSourceDeliverableId = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
     api
       .getProject(id)
-      .then(({ project }) => !cancelled && setProject(project))
+      .then(({ project }) => !cancelled && setProject({ deliverables: [], ...project }))
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -63,6 +66,7 @@ export default function ProjectDetail() {
             notesHtml: nextProject.notesHtml,
             notesAttachmentName: nextProject.notesAttachmentName,
             tasks: nextProject.tasks,
+            deliverables: nextProject.deliverables,
           })
           .catch((err) => setError(err.message));
       }, 500);
@@ -163,9 +167,14 @@ export default function ProjectDetail() {
   function startBarDrag(rowIndex, originalStart, cellWidth, e) {
     e.preventDefault();
     const startX = e.clientX;
+    const task = project.tasks[rowIndex];
+    const bounds = getParentBounds(task.id, project.tasks);
+    const duration = Number(task.duration || 0);
     const onMove = (ev) => {
       const deltaUnits = Math.round((ev.clientX - startX) / cellWidth);
-      updateTask(rowIndex, { manualStart: Math.max(0, originalStart + deltaUnits) });
+      let next = Math.max(0, originalStart + deltaUnits);
+      if (bounds) next = Math.min(Math.max(next, bounds.start), Math.max(bounds.start, bounds.end - duration));
+      updateTask(rowIndex, { manualStart: next });
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -175,8 +184,13 @@ export default function ProjectDetail() {
     window.addEventListener('mouseup', onUp);
   }
 
-  function selectBarColor(taskId, color) {
-    const idx = project.tasks.findIndex((t) => t.id === taskId);
+  function selectBarColor(target, color) {
+    if (typeof target === 'string' && target.indexOf('deliv:') === 0) {
+      updateDeliverable(Number(target.slice(6)), { color });
+      setColorPickerFor(null);
+      return;
+    }
+    const idx = project.tasks.findIndex((t) => t.id === target);
     if (idx !== -1) updateTask(idx, { color });
     setColorPickerFor(null);
   }
@@ -190,9 +204,100 @@ export default function ProjectDetail() {
     });
   }
 
+  function addDeliverable() {
+    setProject((prev) => {
+      const deliverables = (prev.deliverables || []).slice();
+      const lastPos = deliverables.length ? Math.max(...deliverables.map((d) => (typeof d.position === 'number' ? d.position : 0))) : -1;
+      deliverables.push({ id: 'd' + Date.now(), description: '', position: lastPos + 1, color: '#DC2626' });
+      const next = { ...prev, deliverables };
+      scheduleSave(next);
+      return next;
+    });
+  }
+
+  function updateDeliverable(index, patch) {
+    setProject((prev) => {
+      const deliverables = (prev.deliverables || []).slice();
+      deliverables[index] = { ...deliverables[index], ...patch };
+      const next = { ...prev, deliverables };
+      scheduleSave(next);
+      return next;
+    });
+  }
+
+  function handleDeliverableDragStart(index, e) {
+    e.dataTransfer.setData('text/plain', String(index));
+    e.dataTransfer.effectAllowed = 'move';
+    dragSourceDeliverableId.current = project.deliverables[index].id;
+    setDraggingDeliverableId(project.deliverables[index].id);
+  }
+
+  function handleDeliverableDragOver(targetIndex, e) {
+    e.preventDefault();
+    const draggingId = dragSourceDeliverableId.current;
+    if (!draggingId) return;
+    setProject((prev) => {
+      const deliverables = (prev.deliverables || []).slice();
+      const sourceIndex = deliverables.findIndex((d) => d.id === draggingId);
+      if (sourceIndex === -1 || sourceIndex === targetIndex) return prev;
+      const [moved] = deliverables.splice(sourceIndex, 1);
+      deliverables.splice(targetIndex, 0, moved);
+      const next = { ...prev, deliverables };
+      scheduleSave(next);
+      return next;
+    });
+  }
+
+  function handleDeliverableDrop(e) {
+    e.preventDefault();
+    dragSourceDeliverableId.current = null;
+    setDraggingDeliverableId(null);
+  }
+
+  function handleDeliverableDragEnd() {
+    dragSourceDeliverableId.current = null;
+    setDraggingDeliverableId(null);
+  }
+
+  function startDeliverableDrag(index, originalPos, cellWidth, e) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const onMove = (ev) => {
+      const delta = Math.round((ev.clientX - startX) / cellWidth);
+      updateDeliverable(index, { position: Math.max(0, originalPos + delta) });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function prepareExportClone(clonedDoc) {
+    const hasStart = !!project.startDate;
+    const hide = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.display = 'none'; });
+    if (!hasStart) {
+      hide('[data-export="start-date-field"]');
+      hide('[data-export="end-date-field"]');
+      hide('[data-export="cell-fecha-inicio"]');
+      hide('[data-export="cell-fecha-fin"]');
+    }
+    hide('[data-export="notes-toolbar"]');
+    hide('[data-export="add-row-btn"]');
+    hide('[data-export="add-child-btn"]');
+    clonedDoc.querySelectorAll('textarea[data-export="task-name"]').forEach((ta) => {
+      const div = clonedDoc.createElement('div');
+      div.textContent = ta.value;
+      const styleAttr = ta.getAttribute('style') || '';
+      div.setAttribute('style', styleAttr + ';height:auto;overflow:visible;box-sizing:border-box;');
+      ta.parentNode.replaceChild(div, ta);
+    });
+  }
+
   async function exportPng() {
     if (!exportRef.current) return;
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale: 2 });
+    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale: 2, onclone: (doc) => prepareExportClone(doc) });
     const link = document.createElement('a');
     link.download = (project.name || 'proyecto') + '.png';
     link.href = canvas.toDataURL('image/png');
@@ -201,7 +306,7 @@ export default function ProjectDetail() {
 
   async function exportPdf() {
     if (!exportRef.current) return;
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale: 2 });
+    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale: 2, onclone: (doc) => prepareExportClone(doc) });
     const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
     const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] });
     pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
@@ -289,12 +394,12 @@ export default function ProjectDetail() {
                 >
                   <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: '#FFFFFF', position: 'absolute', top: '2px', left: project.excludeWeekends ? '18px' : '2px', transition: 'left .15s ease', boxShadow: '0 1px 2px rgba(15,26,22,.25)' }} />
                 </div>
-                <span style={{ fontFamily: fonts.body, fontSize: '14px', color: colors.text }}>Descartar días hábiles</span>
+                <span style={{ fontFamily: fonts.body, fontSize: '14px', color: colors.text }}>Descartar fines de semana</span>
               </div>
             )}
           </div>
 
-          <div style={{ maxWidth: '480px', marginBottom: '18px' }}>
+          <div data-export="start-date-field" style={{ maxWidth: '480px', marginBottom: '18px' }}>
             <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Fecha inicio</label>
             <input
               type="date"
@@ -304,7 +409,7 @@ export default function ProjectDetail() {
             />
           </div>
 
-          <div style={{ maxWidth: '480px', marginBottom: '18px' }}>
+          <div data-export="end-date-field" style={{ maxWidth: '480px', marginBottom: '18px' }}>
             <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Fecha fin</label>
             <div style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: `1.5px solid ${colors.border}`, borderRadius: '10px', fontFamily: fonts.body, fontSize: '15px', color: colors.textMuted, background: colors.bg }}>
               {endDateLabel}
@@ -326,6 +431,13 @@ export default function ProjectDetail() {
             draggingTaskId={draggingTaskId}
             collapsedIds={collapsedIds}
             onToggleCollapse={toggleCollapse}
+            deliverables={project.deliverables}
+            draggingDeliverableId={draggingDeliverableId}
+            onDeliverableDragStart={(index, pos, cellWidth, e) => startDeliverableDrag(index, pos, cellWidth, e)}
+            onDeliverableContextMenu={(index, x, y) => {
+              setColorPickerFor('deliv:' + index);
+              setColorPickerPos({ x, y });
+            }}
             onUpdateTask={updateTask}
             onAddTask={addTask}
             onAddSubtask={addSubtask}
@@ -338,6 +450,17 @@ export default function ProjectDetail() {
               setColorPickerFor(taskId);
               setColorPickerPos({ x, y });
             }}
+          />
+
+          <DeliverablesTable
+            deliverables={project.deliverables}
+            draggingDeliverableId={draggingDeliverableId}
+            onAddDeliverable={addDeliverable}
+            onUpdateDeliverable={updateDeliverable}
+            onRowDragStart={handleDeliverableDragStart}
+            onRowDragOver={handleDeliverableDragOver}
+            onRowDrop={handleDeliverableDrop}
+            onRowDragEnd={handleDeliverableDragEnd}
           />
         </div>
       </div>
