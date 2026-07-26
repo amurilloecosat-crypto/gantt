@@ -1,38 +1,88 @@
 import { supabase } from './supabaseClient';
 
-async function request(path, options = {}) {
+const DEFAULT_TASKS = [
+  { id: 't1', name: 'Planeación', parentId: null, duration: 3, dependency: '', manualStart: 0, color: '#00A887' },
+  { id: 't2', name: 'Levantamiento de requerimientos', parentId: 't1', duration: 2, dependency: 't1', manualStart: 3 },
+  { id: 't3', name: 'Instalación de sensores', parentId: null, duration: 4, dependency: 't2', manualStart: 5, color: '#00A887' },
+];
+
+function formatDate(isoString) {
+  if (!isoString) return '';
+  return new Date(isoString).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function serialize(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    unit: row.unit,
+    startDate: row.start_date || '',
+    excludeWeekends: !!row.exclude_weekends,
+    notesHtml: row.notes_html || '',
+    notesAttachmentName: row.notes_attachment_name || '',
+    tasks: row.tasks || [],
+    deliverables: row.deliverables || [],
+    lastModified: formatDate(row.updated_at),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function requireUserId() {
   const {
     data: { session },
   } = await supabase.auth.getSession();
-
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-
-  const res = await fetch(`/api${path}`, { ...options, headers });
-
-  if (res.status === 204) return null;
-
-  let body = null;
-  const text = await res.text();
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = null;
-    }
-  }
-
-  if (!res.ok) {
-    const message = (body && body.error) || `Error ${res.status}`;
-    throw new Error(message);
-  }
-  return body;
+  if (!session) throw new Error('No autenticado');
+  return session.user.id;
 }
 
 export const api = {
-  listProjects: () => request('/projects'),
-  createProject: (data) => request('/projects', { method: 'POST', body: JSON.stringify(data) }),
-  getProject: (id) => request(`/projects/${id}`),
-  updateProject: (id, data) => request(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteProject: (id) => request(`/projects/${id}`, { method: 'DELETE' }),
+  async listProjects() {
+    const { data, error } = await supabase.from('projects').select('*').order('updated_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return { projects: data.map(serialize) };
+  },
+
+  async createProject({ name }) {
+    if (!name || !name.trim()) throw new Error('El nombre es obligatorio');
+    const userId = await requireUserId();
+    const { data, error } = await supabase
+      .from('projects')
+      .insert({ user_id: userId, name: name.trim(), tasks: DEFAULT_TASKS })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { project: serialize(data) };
+  },
+
+  async getProject(id) {
+    const { data, error } = await supabase.from('projects').select('*').eq('id', id).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error('Proyecto no encontrado');
+    return { project: serialize(data) };
+  },
+
+  async updateProject(id, patch) {
+    const dbPatch = {};
+    if (patch.name !== undefined) dbPatch.name = String(patch.name);
+    if (patch.unit !== undefined) dbPatch.unit = String(patch.unit);
+    if (patch.startDate !== undefined) dbPatch.start_date = String(patch.startDate);
+    if (patch.excludeWeekends !== undefined) dbPatch.exclude_weekends = !!patch.excludeWeekends;
+    if (patch.notesHtml !== undefined) dbPatch.notes_html = String(patch.notesHtml);
+    if (patch.notesAttachmentName !== undefined) dbPatch.notes_attachment_name = String(patch.notesAttachmentName);
+    if (patch.tasks !== undefined) dbPatch.tasks = patch.tasks;
+    if (patch.deliverables !== undefined) dbPatch.deliverables = patch.deliverables;
+    dbPatch.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase.from('projects').update(dbPatch).eq('id', id).select().maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error('Proyecto no encontrado');
+    return { project: serialize(data) };
+  },
+
+  async deleteProject(id) {
+    const { error } = await supabase.from('projects').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+    return null;
+  },
 };
