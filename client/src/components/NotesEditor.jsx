@@ -25,7 +25,7 @@ export default function NotesEditor({ initialHtml, onBlurSave }) {
   }
 
   return (
-    <div style={{ maxWidth: '640px', marginBottom: '18px' }}>
+    <div data-export="notes-wrap" style={{ maxWidth: '1150px', marginBottom: '18px' }}>
       <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Notas</label>
       <div data-export="notes-box" style={{ border: `1.5px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' }}>
         <div data-export="notes-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '6px 8px', background: colors.bg, borderBottom: `1px solid ${colors.border}` }}>

@@ -27,3 +27,8 @@ button {
   content: attr(data-placeholder);
   color: #9BAAA4;
 }
+
+.delete-row-btn:hover {
+  color: #DC2626 !important;
+  background: #FDECEC !important;
+}

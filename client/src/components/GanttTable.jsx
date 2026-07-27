@@ -42,6 +42,7 @@ export default function GanttTable({
   onUpdateTask,
   onAddTask,
   onAddSubtask,
+  onDeleteTask,
   onRowDragStart,
   onRowDragOver,
   onRowDrop,
@@ -119,7 +120,7 @@ export default function GanttTable({
         </div>
       </div>
 
-      <div style={{ border: `1px solid ${colors.border}`, borderRadius: '14px', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '26px', background: colors.surface }}>
+      <div data-export="gantt-scroll" style={{ border: `1px solid ${colors.border}`, borderRadius: '14px', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '26px', background: colors.surface }}>
         <div
           style={{
             display: 'grid',
@@ -275,6 +276,17 @@ export default function GanttTable({
                       +
                     </button>
                   )}
+                  <button
+                    data-export="delete-row-btn"
+                    className="delete-row-btn"
+                    onClick={() => onDeleteTask(i)}
+                    title="Eliminar fila"
+                    style={{ flexShrink: 0, width: '20px', height: '20px', padding: 0, marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: colors.textFaint, cursor: 'pointer', borderRadius: '5px' }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M2.5 4h11" /><path d="M6.5 4V2.5h3V4" /><path d="M4 4l.7 9h6.6L12 4" />
+                    </svg>
+                  </button>
                 </div>
                 <div style={{ padding: '10px 4px', alignSelf: 'center' }}>
                   <input

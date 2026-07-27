@@ -9,7 +9,7 @@ import DeliverablesTable from '../components/DeliverablesTable.jsx';
 import ColorPicker from '../components/ColorPicker.jsx';
 import { api } from '../api';
 import { colors, fonts } from '../theme.js';
-import { computeProjectEndDateLabel, getParentBounds, getSubtreeIndices, hasChildren, lightenColor, taskLevel } from '../ganttUtils.js';
+import { computeProjectEndDateLabel, computeSchedule, getParentBounds, getSubtreeIndices, hasChildren, lightenColor, taskLevel } from '../ganttUtils.js';
 
 const TIME_UNITS = ['Días', 'Semanas', 'Meses'];
 
@@ -112,6 +112,19 @@ export default function ProjectDetail() {
       const insertAt = subtreeIdx[subtreeIdx.length - 1] + 1;
       tasks.splice(insertAt, 0, { id: 't' + Date.now(), name: 'Nueva subtarea', parentId: tasks[index].id, duration: 1, dependency: '', manualStart: 0 });
       const next = { ...prev, tasks };
+      scheduleSave(next);
+      return next;
+    });
+  }
+
+  function deleteTask(index) {
+    setProject((prev) => {
+      const tasks = prev.tasks;
+      const remove = new Set(getSubtreeIndices(index, tasks).map((i) => tasks[i].id));
+      const nextTasks = tasks
+        .filter((t) => !remove.has(t.id))
+        .map((t) => (remove.has(t.dependency) ? { ...t, dependency: '' } : t));
+      const next = { ...prev, tasks: nextTasks };
       scheduleSave(next);
       return next;
     });
@@ -245,6 +258,15 @@ export default function ProjectDetail() {
     });
   }
 
+  function deleteDeliverable(index) {
+    setProject((prev) => {
+      const deliverables = (prev.deliverables || []).filter((_, i) => i !== index);
+      const next = { ...prev, deliverables };
+      scheduleSave(next);
+      return next;
+    });
+  }
+
   function updateDeliverable(index, patch) {
     setProject((prev) => {
       const deliverables = (prev.deliverables || []).slice();
@@ -304,7 +326,14 @@ export default function ProjectDetail() {
     window.addEventListener('mouseup', onUp);
   }
 
-  function prepareExportClone(clonedDoc) {
+  function exportContentWidth() {
+    const units = Math.max(1, ...computeSchedule(project.tasks || []).map((t) => t.end));
+    const ganttWidth = 710 + units * 48;
+    const onScreen = exportRef.current ? exportRef.current.offsetWidth : 0;
+    return Math.max(onScreen, ganttWidth + 66); // 32px de padding a cada lado + bordes
+  }
+
+  function prepareExportClone(clonedDoc, fullWidth) {
     const hasStart = !!project.startDate;
     const hide = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.display = 'none'; });
     if (!hasStart) {
@@ -316,6 +345,7 @@ export default function ProjectDetail() {
     hide('[data-export="notes-toolbar"]');
     hide('[data-export="add-row-btn"]');
     hide('[data-export="add-child-btn"]');
+    hide('[data-export="delete-row-btn"]');
     clonedDoc.querySelectorAll('[data-export="drag-handle"]').forEach((el) => { el.style.visibility = 'hidden'; });
     clonedDoc.querySelectorAll('[data-export="notes-box"]').forEach((el) => { el.style.border = 'none'; });
     clonedDoc.querySelectorAll('textarea[data-export="task-name"]').forEach((ta) => {
@@ -330,11 +360,24 @@ export default function ProjectDetail() {
       el.style.background = 'transparent';
       el.style.boxShadow = 'none';
     });
+    // El exportable se despliega a su ancho real: el Gantt completo sin scroll y las Notas a todo lo ancho.
+    const root = clonedDoc.querySelector('[data-export="export-root"]');
+    if (root && fullWidth) {
+      root.style.width = fullWidth + 'px';
+      root.style.maxWidth = 'none';
+    }
+    clonedDoc.querySelectorAll('[data-export="gantt-scroll"]').forEach((el) => {
+      el.style.overflow = 'visible';
+      el.style.width = 'max-content';
+      el.style.minWidth = '100%';
+    });
+    clonedDoc.querySelectorAll('[data-export="notes-wrap"]').forEach((el) => { el.style.maxWidth = 'none'; });
   }
 
   async function exportPng() {
     if (!exportRef.current) return;
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale: 2, onclone: (doc) => prepareExportClone(doc) });
+    const fullWidth = exportContentWidth();
+    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale: 2, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
     const link = document.createElement('a');
     link.download = (project.name || 'proyecto') + '.png';
     link.href = canvas.toDataURL('image/png');
@@ -343,10 +386,13 @@ export default function ProjectDetail() {
 
   async function exportPdf() {
     if (!exportRef.current) return;
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale: 2, onclone: (doc) => prepareExportClone(doc) });
-    const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
-    const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] });
-    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+    const fullWidth = exportContentWidth();
+    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale: 2, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
+    // Siempre horizontal: la hoja se dimensiona al contenido, con el lado largo en el ancho.
+    const h = canvas.height;
+    const w = Math.max(canvas.width, Math.round(h * 1.5));
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [w, h] });
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', (w - canvas.width) / 2, 0, canvas.width, canvas.height);
     pdf.save((project.name || 'proyecto') + '.pdf');
   }
 
@@ -414,7 +460,7 @@ export default function ProjectDetail() {
 
         {error && <div style={{ color: '#DC2626', marginBottom: '16px' }}>{error}</div>}
 
-        <div ref={exportRef} style={{ padding: '32px', background: colors.surface }}>
+        <div ref={exportRef} data-export="export-root" style={{ padding: '32px', background: colors.surface }}>
           <div style={{ maxWidth: '480px', marginBottom: '18px' }}>
             <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Nombre</label>
             <input
@@ -495,6 +541,7 @@ export default function ProjectDetail() {
             onUpdateTask={updateTask}
             onAddTask={addTask}
             onAddSubtask={addSubtask}
+            onDeleteTask={deleteTask}
             onRowDragStart={handleRowDragStart}
             onRowDragOver={handleRowDragOver}
             onRowDrop={handleRowDrop}
@@ -518,6 +565,7 @@ export default function ProjectDetail() {
               setColorPickerPos({ x: r.left, y: r.bottom + 8 });
             }}
             onAddDeliverable={addDeliverable}
+            onDeleteDeliverable={deleteDeliverable}
             onUpdateDeliverable={updateDeliverable}
             onRowDragStart={handleDeliverableDragStart}
             onRowDragOver={handleDeliverableDragOver}

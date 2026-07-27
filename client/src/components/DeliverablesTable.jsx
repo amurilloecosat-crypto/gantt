@@ -16,6 +16,7 @@ export default function DeliverablesTable({
   allDelivColorDot,
   onAddDeliverable,
   onUpdateDeliverable,
+  onDeleteDeliverable,
   onRowDragStart,
   onRowDragOver,
   onRowDrop,
@@ -86,7 +87,7 @@ export default function DeliverablesTable({
               <div style={{ padding: '10px 4px 10px 4px', fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, fontWeight: 600, alignSelf: 'center', textAlign: 'center' }}>
                 {i + 1}
               </div>
-              <div style={{ padding: '6px 8px' }}>
+              <div style={{ padding: '6px 8px', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
                 <textarea
                   data-export="task-name"
                   rows={1}
@@ -96,7 +97,8 @@ export default function DeliverablesTable({
                   onChange={(e) => onUpdateDeliverable(i, { description: e.target.value })}
                   onInput={(e) => autosizeTextarea(e.target)}
                   style={{
-                    width: '100%',
+                    flex: 1,
+                    minWidth: 0,
                     boxSizing: 'border-box',
                     padding: '6px 8px',
                     border: `1.5px solid ${colors.border}`,
@@ -112,6 +114,17 @@ export default function DeliverablesTable({
                     minHeight: '32px',
                   }}
                 />
+                <button
+                  data-export="delete-row-btn"
+                  className="delete-row-btn"
+                  onClick={() => onDeleteDeliverable(i)}
+                  title="Eliminar fila"
+                  style={{ flexShrink: 0, width: '20px', height: '20px', padding: 0, marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: colors.textFaint, cursor: 'pointer', borderRadius: '5px' }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2.5 4h11" /><path d="M6.5 4V2.5h3V4" /><path d="M4 4l.7 9h6.6L12 4" />
+                  </svg>
+                </button>
               </div>
             </div>
           );
