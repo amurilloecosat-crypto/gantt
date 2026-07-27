@@ -336,13 +336,17 @@ export default function ProjectDetail() {
   function prepareExportClone(clonedDoc, fullWidth) {
     const hasStart = !!project.startDate;
     const hide = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.display = 'none'; });
+    // Las celdas de fecha son ítems de un grid sin columna explícita: ocultarlas con
+    // display:none corre el resto de columnas (el navegador reacomoda el auto-placement).
+    // visibility:hidden las deja invisibles pero conserva su espacio en el grid.
+    const hideKeepingLayout = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.visibility = 'hidden'; });
     if (!hasStart) {
       hide('[data-export="start-date-field"]');
       hide('[data-export="end-date-field"]');
-      hide('[data-export="col-fecha-inicio"]');
-      hide('[data-export="col-fecha-fin"]');
-      hide('[data-export="cell-fecha-inicio"]');
-      hide('[data-export="cell-fecha-fin"]');
+      hideKeepingLayout('[data-export="col-fecha-inicio"]');
+      hideKeepingLayout('[data-export="col-fecha-fin"]');
+      hideKeepingLayout('[data-export="cell-fecha-inicio"]');
+      hideKeepingLayout('[data-export="cell-fecha-fin"]');
     }
     hide('[data-export="notes-toolbar"]');
     hide('[data-export="add-row-btn"]');
