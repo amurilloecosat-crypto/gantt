@@ -339,6 +339,8 @@ export default function ProjectDetail() {
     if (!hasStart) {
       hide('[data-export="start-date-field"]');
       hide('[data-export="end-date-field"]');
+      hide('[data-export="col-fecha-inicio"]');
+      hide('[data-export="col-fecha-fin"]');
       hide('[data-export="cell-fecha-inicio"]');
       hide('[data-export="cell-fecha-fin"]');
     }
