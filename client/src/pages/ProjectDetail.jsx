@@ -9,7 +9,7 @@ import DeliverablesTable from '../components/DeliverablesTable.jsx';
 import ColorPicker from '../components/ColorPicker.jsx';
 import { api } from '../api';
 import { colors, fonts } from '../theme.js';
-import { computeProjectEndDateLabel, getParentBounds, getSubtreeIndices, hasChildren, taskLevel } from '../ganttUtils.js';
+import { computeProjectEndDateLabel, getParentBounds, getSubtreeIndices, hasChildren, lightenColor, taskLevel } from '../ganttUtils.js';
 
 const TIME_UNITS = ['Días', 'Semanas', 'Meses'];
 
@@ -36,6 +36,7 @@ export default function ProjectDetail() {
   const [colorPickerFor, setColorPickerFor] = useState(null);
   const [colorPickerPos, setColorPickerPos] = useState({ x: 0, y: 0 });
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const exportRef = useRef(null);
   const saveTimeout = useRef(null);
   const dragSourceId = useRef(null);
@@ -45,7 +46,7 @@ export default function ProjectDetail() {
     let cancelled = false;
     api
       .getProject(id)
-      .then(({ project }) => !cancelled && setProject({ deliverables: [], ...project }))
+      .then(({ project }) => !cancelled && setProject({ deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', ...project }))
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -64,9 +65,10 @@ export default function ProjectDetail() {
             startDate: nextProject.startDate,
             excludeWeekends: nextProject.excludeWeekends,
             notesHtml: nextProject.notesHtml,
-            notesAttachmentName: nextProject.notesAttachmentName,
             tasks: nextProject.tasks,
             deliverables: nextProject.deliverables,
+            headerBg: nextProject.headerBg,
+            headerFg: nextProject.headerFg,
           })
           .catch((err) => setError(err.message));
       }, 500);
@@ -185,6 +187,16 @@ export default function ProjectDetail() {
   }
 
   function selectBarColor(target, color) {
+    if (target === 'all:tasks') {
+      applyColorToAllTasks(color);
+      setColorPickerFor(null);
+      return;
+    }
+    if (target === 'all:delivs') {
+      applyColorToAllDeliverables(color);
+      setColorPickerFor(null);
+      return;
+    }
     if (typeof target === 'string' && target.indexOf('deliv:') === 0) {
       updateDeliverable(Number(target.slice(6)), { color });
       setColorPickerFor(null);
@@ -193,6 +205,24 @@ export default function ProjectDetail() {
     const idx = project.tasks.findIndex((t) => t.id === target);
     if (idx !== -1) updateTask(idx, { color });
     setColorPickerFor(null);
+  }
+
+  function applyColorToAllTasks(color) {
+    setProject((prev) => {
+      const tasks = (prev.tasks || []).map((t) => (t.parentId ? t : { ...t, color }));
+      const next = { ...prev, tasks };
+      scheduleSave(next);
+      return next;
+    });
+  }
+
+  function applyColorToAllDeliverables(color) {
+    setProject((prev) => {
+      const deliverables = (prev.deliverables || []).map((d) => ({ ...d, color }));
+      const next = { ...prev, deliverables };
+      scheduleSave(next);
+      return next;
+    });
   }
 
   function toggleCollapse(taskId) {
@@ -286,12 +316,19 @@ export default function ProjectDetail() {
     hide('[data-export="notes-toolbar"]');
     hide('[data-export="add-row-btn"]');
     hide('[data-export="add-child-btn"]');
+    clonedDoc.querySelectorAll('[data-export="drag-handle"]').forEach((el) => { el.style.visibility = 'hidden'; });
+    clonedDoc.querySelectorAll('[data-export="notes-box"]').forEach((el) => { el.style.border = 'none'; });
     clonedDoc.querySelectorAll('textarea[data-export="task-name"]').forEach((ta) => {
       const div = clonedDoc.createElement('div');
       div.textContent = ta.value;
       const styleAttr = ta.getAttribute('style') || '';
-      div.setAttribute('style', styleAttr + ';height:auto;overflow:visible;box-sizing:border-box;');
+      div.setAttribute('style', styleAttr + ';height:auto;overflow:visible;box-sizing:border-box;border:none;background:transparent;');
       ta.parentNode.replaceChild(div, ta);
+    });
+    clonedDoc.querySelectorAll('input, select, textarea, [contenteditable="true"]').forEach((el) => {
+      el.style.border = 'none';
+      el.style.background = 'transparent';
+      el.style.boxShadow = 'none';
     });
   }
 
@@ -333,6 +370,11 @@ export default function ProjectDetail() {
 
   const endDateLabel = computeProjectEndDateLabel(project);
   const showWeekendToggle = project.unit === 'Días';
+  const headerBg = project.headerBg || '#F5F8F7';
+  const headerFg = project.headerFg || '#475A52';
+  const allTaskColorDot = (project.tasks || []).find((t) => !t.parentId && t.color)?.color || '#00A887';
+  const allDelivColorDot = (project.deliverables || [])[0]?.color || '#DC2626';
+  const rowTintPreviewStyle = { width: '22px', height: '22px', borderRadius: '6px', border: `1px solid ${colors.border}`, background: lightenColor(headerBg, 0.88), flexShrink: 0 };
 
   return (
     <div style={{ minHeight: '100vh', background: colors.bg, fontFamily: fonts.body }}>
@@ -349,6 +391,12 @@ export default function ProjectDetail() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
           <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '22px', color: colors.text }}>Detalle del proyecto</div>
           <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setCustomizeOpen(true)}
+              style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+            >
+              Personalizar
+            </button>
             <button
               onClick={exportPng}
               style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
@@ -418,9 +466,7 @@ export default function ProjectDetail() {
 
           <NotesEditor
             initialHtml={project.notesHtml}
-            attachmentName={project.notesAttachmentName}
             onBlurSave={(html) => patchProject({ notesHtml: html })}
-            onAttach={(name) => patchProject({ notesAttachmentName: name })}
           />
 
           <GanttTable
@@ -437,6 +483,14 @@ export default function ProjectDetail() {
             onDeliverableContextMenu={(index, x, y) => {
               setColorPickerFor('deliv:' + index);
               setColorPickerPos({ x, y });
+            }}
+            headerBg={headerBg}
+            headerFg={headerFg}
+            allTaskColorDot={allTaskColorDot}
+            onChangeAllTaskColors={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setColorPickerFor('all:tasks');
+              setColorPickerPos({ x: r.left, y: r.bottom + 8 });
             }}
             onUpdateTask={updateTask}
             onAddTask={addTask}
@@ -455,6 +509,14 @@ export default function ProjectDetail() {
           <DeliverablesTable
             deliverables={project.deliverables}
             draggingDeliverableId={draggingDeliverableId}
+            headerBg={headerBg}
+            headerFg={headerFg}
+            allDelivColorDot={allDelivColorDot}
+            onChangeAllDeliverableColors={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setColorPickerFor('all:delivs');
+              setColorPickerPos({ x: r.left, y: r.bottom + 8 });
+            }}
             onAddDeliverable={addDeliverable}
             onUpdateDeliverable={updateDeliverable}
             onRowDragStart={handleDeliverableDragStart}
@@ -471,6 +533,82 @@ export default function ProjectDetail() {
           onSelect={(color) => selectBarColor(colorPickerFor, color)}
           onClose={() => setColorPickerFor(null)}
         />
+      )}
+
+      {customizeOpen && (
+        <div
+          onClick={() => setCustomizeOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,26,22,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: colors.surface, borderRadius: '14px', padding: '24px', width: '340px', boxShadow: '0 8px 24px rgba(15,26,22,.18)' }}
+          >
+            <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '18px', color: colors.text, marginBottom: '18px' }}>
+              Personalizar tablas
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '8px' }}>Color de cabeceras</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="color"
+                    value={headerBg}
+                    onChange={(e) => patchProject({ headerBg: e.target.value })}
+                    style={{ width: '52px', height: '36px', padding: 0, border: `1.5px solid ${colors.border}`, borderRadius: '8px', background: colors.surface, cursor: 'pointer' }}
+                  />
+                  <input
+                    type="text"
+                    value={headerBg}
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      if (/^#[0-9a-fA-F]{6}$/.test(v)) patchProject({ headerBg: v });
+                    }}
+                    style={{ flex: 1, minWidth: 0, padding: '9px 12px', border: `1.5px solid ${colors.border}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, textTransform: 'uppercase' }}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '8px' }}>Color de la fuente</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="color"
+                    value={headerFg}
+                    onChange={(e) => patchProject({ headerFg: e.target.value })}
+                    style={{ width: '52px', height: '36px', padding: 0, border: `1.5px solid ${colors.border}`, borderRadius: '8px', background: colors.surface, cursor: 'pointer' }}
+                  />
+                  <input
+                    type="text"
+                    value={headerFg}
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      if (/^#[0-9a-fA-F]{6}$/.test(v)) patchProject({ headerFg: v });
+                    }}
+                    style={{ flex: 1, minWidth: 0, padding: '9px 12px', border: `1.5px solid ${colors.border}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, textTransform: 'uppercase' }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', font: `500 13px ${fonts.body}`, color: colors.textMuted }}>
+                <span style={rowTintPreviewStyle} />
+                Filas principales del Cronograma
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '22px' }}>
+              <button
+                onClick={() => patchProject({ headerBg: '#F5F8F7', headerFg: '#475A52' })}
+                style={{ background: 'transparent', color: colors.textMuted, border: 'none', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+              >
+                Restablecer
+              </button>
+              <button
+                onClick={() => setCustomizeOpen(false)}
+                style={{ background: colors.primary, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 18px', font: `600 15px ${fonts.body}`, cursor: 'pointer' }}
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

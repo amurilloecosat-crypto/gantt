@@ -11,6 +11,8 @@ create table if not exists public.projects (
   notes_attachment_name text default '',
   tasks jsonb not null default '[]'::jsonb,
   deliverables jsonb not null default '[]'::jsonb,
+  header_bg text not null default '#F5F8F7',
+  header_fg text not null default '#475A52',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

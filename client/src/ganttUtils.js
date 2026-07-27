@@ -157,6 +157,25 @@ export function ordinalLabel(n) {
   return ORDINAL_LABELS[n] || `${n}º`;
 }
 
+export function computeDeliverableLanes(deliverables, cellWidth) {
+  // Reparte las etiquetas en carriles para que nunca se encimen horizontalmente.
+  const lanes = [];
+  const laneOf = {};
+  (deliverables || [])
+    .map((d, i) => ({ i, pos: typeof d.position === 'number' ? d.position : 0 }))
+    .sort((a, b) => a.pos - b.pos)
+    .forEach(({ i, pos }) => {
+      const title = `${ordinalLabel(i + 1)} Entregable`;
+      const w = title.length * 6.4 + 20;
+      const left = pos * cellWidth - w / 2;
+      let lane = 0;
+      while (lanes[lane] != null && lanes[lane] > left - 6) lane++;
+      lanes[lane] = left + w;
+      laneOf[i] = lane;
+    });
+  return { laneOf, laneCount: Math.max(1, lanes.length) };
+}
+
 export function buildMiniGanttRows(tasks) {
   if (!tasks || !tasks.length) return [];
   const scheduled = computeSchedule(tasks);

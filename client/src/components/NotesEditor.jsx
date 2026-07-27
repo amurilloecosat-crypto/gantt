@@ -11,9 +11,8 @@ const toolBtnStyle = {
   color: colors.textMuted,
 };
 
-export default function NotesEditor({ initialHtml, attachmentName, onBlurSave, onAttach }) {
+export default function NotesEditor({ initialHtml, onBlurSave }) {
   const notesRef = useRef(null);
-  const fileInputRef = useRef(null);
 
   function exec(command) {
     if (notesRef.current) notesRef.current.focus();
@@ -25,15 +24,10 @@ export default function NotesEditor({ initialHtml, attachmentName, onBlurSave, o
     onBlurSave(notesRef.current.innerHTML);
   }
 
-  function handleFileChange(e) {
-    const file = e.target.files && e.target.files[0];
-    if (file) onAttach(file.name);
-  }
-
   return (
     <div style={{ maxWidth: '640px', marginBottom: '18px' }}>
       <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Notas</label>
-      <div style={{ border: `1.5px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' }}>
+      <div data-export="notes-box" style={{ border: `1.5px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' }}>
         <div data-export="notes-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '6px 8px', background: colors.bg, borderBottom: `1px solid ${colors.border}` }}>
           <button onMouseDown={(e) => { e.preventDefault(); exec('bold'); }} title="Negritas" style={{ ...toolBtnStyle, font: `700 14px ${fonts.body}`, color: colors.text }}>B</button>
           <button onMouseDown={(e) => { e.preventDefault(); exec('italic'); }} title="Cursiva" style={{ ...toolBtnStyle, font: `italic 700 14px ${fonts.body}`, color: colors.text }}>I</button>
@@ -59,11 +53,6 @@ export default function NotesEditor({ initialHtml, attachmentName, onBlurSave, o
               <circle cx="3" cy="12" r="1" fill="currentColor" stroke="none" /><line x1="6" y1="12" x2="14" y2="12" />
             </svg>
           </button>
-          <div style={{ flex: 1 }} />
-          <button onClick={() => fileInputRef.current && fileInputRef.current.click()} title="Cargar archivo" style={toolBtnStyle}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M11 6.5V11a3 3 0 0 1-6 0V4.5a2 2 0 0 1 4 0V10" /></svg>
-          </button>
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} />
         </div>
         <div
           contentEditable
@@ -74,11 +63,6 @@ export default function NotesEditor({ initialHtml, attachmentName, onBlurSave, o
           style={{ minHeight: '100px', padding: '12px 14px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, outline: 'none' }}
           data-placeholder="Escribe notas del proyecto..."
         />
-        {attachmentName && (
-          <div style={{ padding: '6px 14px 10px', fontFamily: fonts.body, fontSize: '12px', color: colors.textMuted }}>
-            Adjunto: {attachmentName}
-          </div>
-        )}
       </div>
     </div>
   );

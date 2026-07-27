@@ -19,9 +19,10 @@ function serialize(row) {
     startDate: row.start_date || '',
     excludeWeekends: !!row.exclude_weekends,
     notesHtml: row.notes_html || '',
-    notesAttachmentName: row.notes_attachment_name || '',
     tasks: row.tasks || [],
     deliverables: row.deliverables || [],
+    headerBg: row.header_bg || '#F5F8F7',
+    headerFg: row.header_fg || '#475A52',
     lastModified: formatDate(row.updated_at),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -69,9 +70,10 @@ export const api = {
     if (patch.startDate !== undefined) dbPatch.start_date = String(patch.startDate);
     if (patch.excludeWeekends !== undefined) dbPatch.exclude_weekends = !!patch.excludeWeekends;
     if (patch.notesHtml !== undefined) dbPatch.notes_html = String(patch.notesHtml);
-    if (patch.notesAttachmentName !== undefined) dbPatch.notes_attachment_name = String(patch.notesAttachmentName);
     if (patch.tasks !== undefined) dbPatch.tasks = patch.tasks;
     if (patch.deliverables !== undefined) dbPatch.deliverables = patch.deliverables;
+    if (patch.headerBg !== undefined) dbPatch.header_bg = String(patch.headerBg);
+    if (patch.headerFg !== undefined) dbPatch.header_fg = String(patch.headerFg);
     dbPatch.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase.from('projects').update(dbPatch).eq('id', id).select().maybeSingle();

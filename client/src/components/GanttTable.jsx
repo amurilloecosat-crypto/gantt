@@ -1,6 +1,7 @@
 import React from 'react';
 import { colors, fonts } from '../theme.js';
 import {
+  computeDeliverableLanes,
   computeNumbers,
   computeSchedule,
   getAncestorIds,
@@ -15,14 +16,6 @@ import {
 const CELL_WIDTH = 48;
 const FIXED_COLS_WIDTH = 710; // 24 + 40 + 260 + 110 + 92 + 92 + 92
 const GRID_TEMPLATE_COLS = '24px 40px 260px 110px 92px 92px 92px';
-
-const headerCellStyle = {
-  padding: '10px 4px',
-  font: `700 12px ${fonts.body}`,
-  color: colors.textMuted,
-  textTransform: 'uppercase',
-  letterSpacing: '.03em',
-};
 
 function autosizeTextarea(el) {
   if (!el) return;
@@ -42,6 +35,10 @@ export default function GanttTable({
   draggingDeliverableId,
   onDeliverableDragStart,
   onDeliverableContextMenu,
+  headerBg,
+  headerFg,
+  onChangeAllTaskColors,
+  allTaskColorDot,
   onUpdateTask,
   onAddTask,
   onAddSubtask,
@@ -60,6 +57,16 @@ export default function GanttTable({
   const ganttColumns = Array.from({ length: maxEnd }, (_, i) => i + 1);
   const ganttMinWidth = FIXED_COLS_WIDTH + gridWidth;
   const hasDeliverables = (deliverables || []).length > 0;
+  const { laneOf, laneCount } = computeDeliverableLanes(deliverables, CELL_WIDTH);
+  const rootRowTint = lightenColor(headerBg || '#F5F8F7', 0.88);
+
+  const headerCellStyle = {
+    padding: '10px 4px',
+    font: `700 12px ${fonts.body}`,
+    color: headerFg,
+    textTransform: 'uppercase',
+    letterSpacing: '.03em',
+  };
 
   function formatDateStr(date) {
     return date.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -93,13 +100,23 @@ export default function GanttTable({
     <div style={{ marginTop: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
         <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '18px', color: colors.text }}>Cronograma</div>
-        <button
-          data-export="add-row-btn"
-          onClick={onAddTask}
-          style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '8px 14px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
-        >
-          + Agregar fila
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            data-export="add-row-btn"
+            onClick={onChangeAllTaskColors}
+            style={{ display: 'flex', alignItems: 'center', gap: '7px', background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '8px 14px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+          >
+            <span style={{ width: '13px', height: '13px', borderRadius: '50%', background: allTaskColorDot, display: 'inline-block', flexShrink: 0 }} />
+            Cambiar color
+          </button>
+          <button
+            data-export="add-row-btn"
+            onClick={onAddTask}
+            style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '8px 14px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+          >
+            + Agregar fila
+          </button>
+        </div>
       </div>
 
       <div style={{ border: `1px solid ${colors.border}`, borderRadius: '14px', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '26px', background: colors.surface }}>
@@ -109,7 +126,8 @@ export default function GanttTable({
             gridTemplateColumns: `${GRID_TEMPLATE_COLS} ${gridWidth}px`,
             gridTemplateRows: 'auto auto',
             minWidth: ganttMinWidth + 'px',
-            background: colors.bg,
+            background: headerBg,
+            color: headerFg,
             borderBottom: `1px solid ${colors.border}`,
           }}
         >
@@ -118,9 +136,9 @@ export default function GanttTable({
           <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 3 }}>Fase/Tarea/Subtarea</div>
           <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 4 }}>Duración</div>
           <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 5 }}>DEP</div>
-          <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 6 }}>Fecha inicio</div>
-          <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 7 }}>Fecha fin</div>
-          <div style={{ gridRow: 1, gridColumn: 8, padding: '6px 4px', textAlign: 'center', font: `700 12px ${fonts.body}`, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: `1px solid ${colors.border}` }}>
+          <div data-export="col-fecha-inicio" style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 6 }}>Fecha inicio</div>
+          <div data-export="col-fecha-fin" style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 7 }}>Fecha fin</div>
+          <div style={{ gridRow: 1, gridColumn: 8, padding: '6px 4px', textAlign: 'center', font: `700 12px ${fonts.body}`, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: `1px solid ${colors.border}` }}>
             {unit}
           </div>
           <div style={{ ...headerCellStyle, gridRow: 2, gridColumn: 8 }}>
@@ -134,7 +152,7 @@ export default function GanttTable({
           </div>
         </div>
 
-        <div style={{ position: 'relative', minWidth: ganttMinWidth + 'px', paddingBottom: hasDeliverables ? '72px' : '0px' }}>
+        <div style={{ position: 'relative', minWidth: ganttMinWidth + 'px', paddingBottom: hasDeliverables ? `${72 + (laneCount - 1) * 24}px` : '0px' }}>
           {scheduled.map((t, i) => {
             const ancestorIds = getAncestorIds(t.id, tasks);
             const isHiddenByCollapse = ancestorIds.some((aid) => collapsedIds.has(aid));
@@ -164,10 +182,11 @@ export default function GanttTable({
                   transform: isDragging ? 'scale(1.01)' : 'none',
                   boxShadow: isDragging ? '0 6px 14px rgba(15,26,22,.15)' : 'none',
                   transition: 'transform .15s ease, opacity .15s ease, box-shadow .15s ease',
-                  background: isDragging ? colors.surface : 'transparent',
+                  background: isDragging ? colors.surface : level === 0 ? rootRowTint : 'transparent',
                 }}
               >
                 <div
+                  data-export="drag-handle"
                   draggable
                   onDragStart={(e) => onRowDragStart(i, e)}
                   onDragEnd={onRowDragEnd}
@@ -235,8 +254,8 @@ export default function GanttTable({
                       borderRadius: '8px',
                       fontFamily: fonts.body,
                       fontSize: '14px',
-                      color: level > 0 ? colors.primaryDark : colors.text,
-                      background: level > 0 ? '#F0F8F5' : colors.surface,
+                      color: '#0F1A16',
+                      background: 'transparent',
                       marginLeft: (!isParent && level > 0 ? level * 10 : 0) + 'px',
                       resize: 'none',
                       overflow: 'hidden',
@@ -329,7 +348,7 @@ export default function GanttTable({
               position: 'absolute',
               top: 0,
               left: FIXED_COLS_WIDTH + 'px',
-              width: gridWidth + 'px',
+              width: gridWidth + 90 + 'px',
               height: '100%',
               paddingBottom: '18px',
               boxSizing: 'border-box',
@@ -348,7 +367,7 @@ export default function GanttTable({
                     position: 'absolute',
                     top: 0,
                     left: pos * CELL_WIDTH + 'px',
-                    height: '100%',
+                    height: `calc(100% - ${(laneCount - 1) * 24}px)`,
                     width: 0,
                     display: 'flex',
                     flexDirection: 'column',
@@ -373,6 +392,9 @@ export default function GanttTable({
                     }}
                     style={{
                       marginTop: '4px',
+                      position: 'relative',
+                      top: (laneOf[i] || 0) * 24 + 'px',
+                      flexShrink: 0,
                       padding: '3px 8px',
                       borderRadius: '6px',
                       background: color,

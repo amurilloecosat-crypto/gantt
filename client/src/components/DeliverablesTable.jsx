@@ -10,6 +10,10 @@ function autosizeTextarea(el) {
 export default function DeliverablesTable({
   deliverables,
   draggingDeliverableId,
+  headerBg,
+  headerFg,
+  onChangeAllDeliverableColors,
+  allDelivColorDot,
   onAddDeliverable,
   onUpdateDeliverable,
   onRowDragStart,
@@ -21,20 +25,30 @@ export default function DeliverablesTable({
     <div style={{ marginTop: '32px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
         <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '18px', color: colors.text }}>Entregables</div>
-        <button
-          data-export="add-row-btn"
-          onClick={onAddDeliverable}
-          style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '8px 14px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
-        >
-          + Agregar fila
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            data-export="add-row-btn"
+            onClick={onChangeAllDeliverableColors}
+            style={{ display: 'flex', alignItems: 'center', gap: '7px', background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '8px 14px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+          >
+            <span style={{ width: '13px', height: '13px', borderRadius: '50%', background: allDelivColorDot, display: 'inline-block', flexShrink: 0 }} />
+            Cambiar color
+          </button>
+          <button
+            data-export="add-row-btn"
+            onClick={onAddDeliverable}
+            style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '8px 14px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+          >
+            + Agregar fila
+          </button>
+        </div>
       </div>
 
       <div style={{ border: `1px solid ${colors.border}`, borderRadius: '14px', overflow: 'hidden', background: colors.surface }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '24px 100px 1fr', background: colors.bg, borderBottom: `1px solid ${colors.border}` }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '24px 56px 1fr', background: headerBg, color: headerFg, borderBottom: `1px solid ${colors.border}` }}>
           <div />
-          <div style={{ padding: '10px 4px 10px 12px', font: `700 12px ${fonts.body}`, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '.03em' }}>No. entregable</div>
-          <div style={{ padding: '10px 4px', font: `700 12px ${fonts.body}`, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '.03em' }}>Descripción Entregable</div>
+          <div style={{ padding: '10px 4px 10px 12px', font: `700 12px ${fonts.body}`, textTransform: 'uppercase', letterSpacing: '.03em' }}>No.</div>
+          <div style={{ padding: '10px 4px', font: `700 12px ${fonts.body}`, textTransform: 'uppercase', letterSpacing: '.03em' }}>Descripción Entregable</div>
         </div>
 
         {(deliverables || []).map((d, i) => {
@@ -46,7 +60,7 @@ export default function DeliverablesTable({
               onDrop={onRowDrop}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '24px 100px 1fr',
+                gridTemplateColumns: '24px 56px 1fr',
                 borderBottom: `1px solid ${colors.border}`,
                 alignItems: 'flex-start',
                 opacity: isDragging ? 0.4 : 1,
@@ -57,6 +71,7 @@ export default function DeliverablesTable({
               }}
             >
               <div
+                data-export="drag-handle"
                 draggable
                 onDragStart={(e) => onRowDragStart(i, e)}
                 onDragEnd={onRowDragEnd}
@@ -68,7 +83,7 @@ export default function DeliverablesTable({
                   <circle cx="4" cy="18" r="1.5" /><circle cx="10" cy="18" r="1.5" />
                 </svg>
               </div>
-              <div style={{ padding: '10px 4px', fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, fontWeight: 600, alignSelf: 'center' }}>
+              <div style={{ padding: '10px 4px 10px 4px', fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, fontWeight: 600, alignSelf: 'center', textAlign: 'center' }}>
                 {i + 1}
               </div>
               <div style={{ padding: '6px 8px' }}>
