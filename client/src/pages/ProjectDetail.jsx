@@ -182,14 +182,27 @@ export default function ProjectDetail() {
   function startBarDrag(rowIndex, originalStart, cellWidth, e) {
     e.preventDefault();
     const startX = e.clientX;
-    const task = project.tasks[rowIndex];
-    const bounds = getParentBounds(task.id, project.tasks);
+    const tasks = project.tasks;
+    const task = tasks[rowIndex];
+    const bounds = getParentBounds(task.id, tasks);
     const duration = Number(task.duration || 0);
+    // Arrastrar un padre o subitem mueve toda su rama junta, conservando el acomodo relativo.
+    const subtreeIdx = getSubtreeIndices(rowIndex, tasks);
+    const originalStarts = subtreeIdx.map((i) => Number(tasks[i].manualStart || 0));
     const onMove = (ev) => {
       const deltaUnits = Math.round((ev.clientX - startX) / cellWidth);
       let next = Math.max(0, originalStart + deltaUnits);
       if (bounds) next = Math.min(Math.max(next, bounds.start), Math.max(bounds.start, bounds.end - duration));
-      updateTask(rowIndex, { manualStart: next });
+      const delta = next - originalStart;
+      setProject((prev) => {
+        const curTasks = prev.tasks.slice();
+        subtreeIdx.forEach((idx, k) => {
+          curTasks[idx] = { ...curTasks[idx], manualStart: originalStarts[k] + delta };
+        });
+        const nextProject = { ...prev, tasks: curTasks };
+        scheduleSave(nextProject);
+        return nextProject;
+      });
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -328,15 +341,16 @@ export default function ProjectDetail() {
 
   function exportContentWidth() {
     const units = Math.max(1, ...computeSchedule(project.tasks || []).map((t) => t.end));
-    const ganttWidth = 710 + units * 48;
+    const ganttWidth = 850 + units * 48;
     const onScreen = exportRef.current ? exportRef.current.offsetWidth : 0;
     return Math.max(onScreen, ganttWidth + 66); // 32px de padding a cada lado + bordes
   }
 
   function prepareExportClone(clonedDoc, fullWidth) {
     const hasStart = !!project.startDate;
+    const hasResponsible = (project.tasks || []).some((t) => (t.responsible || '').trim());
     const hide = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.display = 'none'; });
-    // Las celdas de fecha son ítems de un grid sin columna explícita: ocultarlas con
+    // Las celdas de fecha/responsable son ítems de un grid sin columna explícita: ocultarlas con
     // display:none corre el resto de columnas (el navegador reacomoda el auto-placement).
     // visibility:hidden las deja invisibles pero conserva su espacio en el grid.
     const hideKeepingLayout = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.visibility = 'hidden'; });
@@ -348,19 +362,17 @@ export default function ProjectDetail() {
       hideKeepingLayout('[data-export="cell-fecha-inicio"]');
       hideKeepingLayout('[data-export="cell-fecha-fin"]');
     }
+    if (!hasResponsible) {
+      hideKeepingLayout('[data-export="col-responsable"]');
+      hideKeepingLayout('[data-export="cell-responsable"]');
+    }
     hide('[data-export="notes-toolbar"]');
     hide('[data-export="add-row-btn"]');
     hide('[data-export="add-child-btn"]');
     hide('[data-export="delete-row-btn"]');
+    hide('[data-export="collapse-btn"]');
     clonedDoc.querySelectorAll('[data-export="drag-handle"]').forEach((el) => { el.style.visibility = 'hidden'; });
     clonedDoc.querySelectorAll('[data-export="notes-box"]').forEach((el) => { el.style.border = 'none'; });
-    clonedDoc.querySelectorAll('textarea[data-export="task-name"]').forEach((ta) => {
-      const div = clonedDoc.createElement('div');
-      div.textContent = ta.value;
-      const styleAttr = ta.getAttribute('style') || '';
-      div.setAttribute('style', styleAttr + ';height:auto;overflow:visible;box-sizing:border-box;border:none;background:transparent;');
-      ta.parentNode.replaceChild(div, ta);
-    });
     clonedDoc.querySelectorAll('input, select, textarea, [contenteditable="true"]').forEach((el) => {
       el.style.border = 'none';
       el.style.background = 'transparent';

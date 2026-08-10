@@ -176,6 +176,23 @@ export function computeDeliverableLanes(deliverables, cellWidth) {
   return { laneOf, laneCount: Math.max(1, lanes.length) };
 }
 
+export function shadeInterval(unit, excludeWeekends) {
+  if (unit === 'Semanas') return 4;
+  if (unit === 'Meses') return 3;
+  return excludeWeekends ? 5 : 7;
+}
+
+export function buildShadeGradient(cellWidth, maxEnd, unit, excludeWeekends) {
+  const interval = shadeInterval(unit, excludeWeekends);
+  if (maxEnd < interval) return 'none';
+  const stops = [];
+  for (let i = 1; i <= maxEnd; i++) {
+    const color = i % interval === 0 ? 'rgba(15,26,22,0.09)' : 'rgba(15,26,22,0)';
+    stops.push(`${color} ${(i - 1) * cellWidth}px`, `${color} ${i * cellWidth}px`);
+  }
+  return `linear-gradient(to right, ${stops.join(', ')})`;
+}
+
 export function buildMiniGanttRows(tasks) {
   if (!tasks || !tasks.length) return [];
   const scheduled = computeSchedule(tasks);

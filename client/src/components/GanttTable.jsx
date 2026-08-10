@@ -1,6 +1,7 @@
 import React from 'react';
 import { colors, fonts } from '../theme.js';
 import {
+  buildShadeGradient,
   computeDeliverableLanes,
   computeNumbers,
   computeSchedule,
@@ -14,13 +15,12 @@ import {
 } from '../ganttUtils.js';
 
 const CELL_WIDTH = 48;
-const FIXED_COLS_WIDTH = 710; // 24 + 40 + 260 + 110 + 92 + 92 + 92
-const GRID_TEMPLATE_COLS = '24px 40px 260px 110px 92px 92px 92px';
+const FIXED_COLS_WIDTH = 850; // 24 + 40 + 260 + 110 + 92 + 92 + 92 + 140
+const GRID_TEMPLATE_COLS = '24px 40px 260px 110px 92px 92px 92px 140px';
+const STICKY_LEFT = { drag: 0, number: 24, name: 64, duration: 324, dep: 434 };
 
-function autosizeTextarea(el) {
-  if (!el) return;
-  el.style.height = 'auto';
-  el.style.height = el.scrollHeight + 'px';
+function execBold() {
+  document.execCommand('bold');
 }
 
 export default function GanttTable({
@@ -58,8 +58,9 @@ export default function GanttTable({
   const ganttColumns = Array.from({ length: maxEnd }, (_, i) => i + 1);
   const ganttMinWidth = FIXED_COLS_WIDTH + gridWidth;
   const hasDeliverables = (deliverables || []).length > 0;
+  const hasResponsible = tasks.some((t) => (t.responsible || '').trim());
   const { laneOf, laneCount } = computeDeliverableLanes(deliverables, CELL_WIDTH);
-  const rootRowTint = lightenColor(headerBg || '#F5F8F7', 0.88);
+  const shadeGradient = buildShadeGradient(CELL_WIDTH, maxEnd, unit, excludeWeekends);
 
   const headerCellStyle = {
     padding: '10px 4px',
@@ -68,6 +69,7 @@ export default function GanttTable({
     textTransform: 'uppercase',
     letterSpacing: '.03em',
   };
+  const stickyHeaderStyle = (left) => ({ ...headerCellStyle, position: 'sticky', left: left + 'px', zIndex: 4, background: headerBg });
 
   function formatDateStr(date) {
     return date.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -132,18 +134,19 @@ export default function GanttTable({
             borderBottom: `1px solid ${colors.border}`,
           }}
         >
-          <div style={{ gridRow: '1 / span 2', gridColumn: 1 }} />
-          <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 2 }}>#</div>
-          <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 3 }}>Fase/Tarea/Subtarea</div>
-          <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 4 }}>Duración</div>
-          <div style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 5 }}>DEP</div>
+          <div style={{ gridRow: '1 / span 2', gridColumn: 1, ...stickyHeaderStyle(STICKY_LEFT.drag) }} />
+          <div style={{ gridRow: '1 / span 2', gridColumn: 2, ...stickyHeaderStyle(STICKY_LEFT.number) }}>#</div>
+          <div style={{ gridRow: '1 / span 2', gridColumn: 3, ...stickyHeaderStyle(STICKY_LEFT.name) }}>Fase/Tarea/Subtarea</div>
+          <div style={{ gridRow: '1 / span 2', gridColumn: 4, ...stickyHeaderStyle(STICKY_LEFT.duration) }}>Duración</div>
+          <div style={{ gridRow: '1 / span 2', gridColumn: 5, ...stickyHeaderStyle(STICKY_LEFT.dep) }}>DEP</div>
           <div data-export="col-fecha-inicio" style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 6 }}>Fecha inicio</div>
           <div data-export="col-fecha-fin" style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 7 }}>Fecha fin</div>
-          <div style={{ gridRow: 1, gridColumn: 8, padding: '6px 4px', textAlign: 'center', font: `700 12px ${fonts.body}`, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: `1px solid ${colors.border}` }}>
+          <div data-export="col-responsable" style={{ ...headerCellStyle, gridRow: '1 / span 2', gridColumn: 8 }}>Responsable</div>
+          <div style={{ gridRow: 1, gridColumn: 9, padding: '6px 4px', textAlign: 'center', font: `700 12px ${fonts.body}`, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: `1px solid ${colors.border}` }}>
             {unit}
           </div>
-          <div style={{ ...headerCellStyle, gridRow: 2, gridColumn: 8 }}>
-            <div style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: `${CELL_WIDTH}px` }}>
+          <div style={{ ...headerCellStyle, gridRow: 2, gridColumn: 9 }}>
+            <div style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: `${CELL_WIDTH}px`, backgroundImage: shadeGradient }}>
               {ganttColumns.map((col) => (
                 <div key={col} style={{ textAlign: 'center', borderLeft: `1px solid ${colors.border}` }}>
                   {col}
@@ -162,11 +165,21 @@ export default function GanttTable({
             const level = taskLevel(t.id, tasks);
             const isParent = hasChildren(t.id, tasks);
             const isCollapsed = collapsedIds.has(t.id);
+            const childCount = tasks.filter((c) => c.parentId === t.id).length;
             const depOptions = [{ value: '', label: 'N/A' }].concat(
               tasks.map((o, oi) => ({ value: o.id, label: numbers[oi] })).filter((o) => o.value !== t.id)
             );
             const isDragging = draggingTaskId === t.id;
             const rootColor = getRootAncestorColor(t, tasks);
+            const rowBg = isDragging
+              ? '#FFFFFF'
+              : level === 2
+              ? i % 2 === 0
+                ? lightenColor(headerBg || '#F5F8F7', 0.98)
+                : 'transparent'
+              : lightenColor(headerBg || '#F5F8F7', level === 0 ? 0.88 : 0.95);
+            const stickyRowBg = rowBg === 'transparent' ? '#FFFFFF' : rowBg;
+            const stickyCellStyle = (left, extra) => ({ position: 'sticky', left: left + 'px', zIndex: 2, background: stickyRowBg, ...extra });
 
             return (
               <div
@@ -183,7 +196,7 @@ export default function GanttTable({
                   transform: isDragging ? 'scale(1.01)' : 'none',
                   boxShadow: isDragging ? '0 6px 14px rgba(15,26,22,.15)' : 'none',
                   transition: 'transform .15s ease, opacity .15s ease, box-shadow .15s ease',
-                  background: isDragging ? colors.surface : level === 0 ? rootRowTint : 'transparent',
+                  background: rowBg,
                 }}
               >
                 <div
@@ -191,7 +204,7 @@ export default function GanttTable({
                   draggable
                   onDragStart={(e) => onRowDragStart(i, e)}
                   onDragEnd={onRowDragEnd}
-                  style={{ cursor: 'grab', padding: '10px 6px', color: colors.textFaint }}
+                  style={stickyCellStyle(STICKY_LEFT.drag, { cursor: 'grab', padding: '10px 6px', color: colors.textFaint })}
                 >
                   <svg width="14" height="24" viewBox="0 0 14 24" fill="currentColor">
                     <circle cx="4" cy="6" r="1.5" /><circle cx="10" cy="6" r="1.5" />
@@ -199,28 +212,37 @@ export default function GanttTable({
                     <circle cx="4" cy="18" r="1.5" /><circle cx="10" cy="18" r="1.5" />
                   </svg>
                 </div>
-                <div style={{ padding: '10px 4px', fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, fontWeight: 600, alignSelf: 'center' }}>
-                  {numbers[i]}
-                </div>
-                <div style={{ padding: '10px 4px', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                <div
+                  style={stickyCellStyle(STICKY_LEFT.number, {
+                    padding: '10px 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                    fontFamily: fonts.body,
+                    fontSize: '14px',
+                    color: colors.textMuted,
+                    fontWeight: 600,
+                    alignSelf: 'center',
+                  })}
+                >
                   {isParent && (
                     <button
+                      data-export="collapse-btn"
                       onClick={() => onToggleCollapse(t.id)}
                       title={isCollapsed ? 'Expandir' : 'Plegar'}
                       style={{
+                        width: '16px',
+                        height: '16px',
                         flexShrink: 0,
-                        width: '20px',
-                        height: '20px',
-                        marginLeft: level * 28 + 'px',
-                        marginTop: '4px',
+                        padding: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
                         border: 'none',
                         background: 'transparent',
                         color: colors.textMuted,
                         cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 0,
+                        borderRadius: '4px',
                       }}
                     >
                       <svg
@@ -238,57 +260,84 @@ export default function GanttTable({
                       </svg>
                     </button>
                   )}
-                  <textarea
-                    data-export="task-name"
-                    rows={1}
-                    ref={autosizeTextarea}
-                    value={t.name}
-                    onChange={(e) => onUpdateTask(i, { name: e.target.value })}
-                    onInput={(e) => autosizeTextarea(e.target)}
+                  <span>{numbers[i]}</span>
+                </div>
+                <div style={stickyCellStyle(STICKY_LEFT.name, { width: '260px', boxSizing: 'border-box', padding: '10px 4px', display: 'flex', alignItems: 'flex-start', gap: '4px' })}>
+                  <div
+                    data-export="task-name-rich"
+                    contentEditable
+                    suppressContentEditableWarning
+                    onBlur={(e) => onUpdateTask(i, { name: e.target.innerHTML })}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+                        e.preventDefault();
+                        execBold();
+                      }
+                    }}
+                    dangerouslySetInnerHTML={{ __html: t.name || '' }}
                     style={{
                       flex: 1,
                       minWidth: 0,
                       boxSizing: 'border-box',
                       padding: '6px 8px',
-                      paddingLeft: (isParent ? 8 : level * 28 + 8) + 'px',
+                      paddingLeft: level * 28 + 8 + 'px',
                       border: `1.5px solid ${colors.border}`,
                       borderRadius: '8px',
                       fontFamily: fonts.body,
                       fontSize: '14px',
                       color: '#0F1A16',
                       background: 'transparent',
-                      marginLeft: (!isParent && level > 0 ? level * 10 : 0) + 'px',
-                      resize: 'none',
-                      overflow: 'hidden',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
                       lineHeight: '1.3',
                       minHeight: '32px',
+                      outline: 'none',
                     }}
                   />
-                  {level < 2 && (
-                    <button
-                      data-export="add-child-btn"
-                      onClick={() => onAddSubtask(i)}
-                      title="Agregar subtarea"
-                      style={{ flexShrink: 0, width: '24px', height: '24px', marginTop: '4px', borderRadius: '6px', border: `1.5px solid ${colors.border}`, background: colors.surface, color: colors.primaryDark, font: `600 14px ${fonts.body}`, cursor: 'pointer', lineHeight: 1 }}
-                    >
-                      +
-                    </button>
-                  )}
-                  <button
-                    data-export="delete-row-btn"
-                    className="delete-row-btn"
-                    onClick={() => onDeleteTask(i)}
-                    title="Eliminar fila"
-                    style={{ flexShrink: 0, width: '20px', height: '20px', padding: 0, marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: colors.textFaint, cursor: 'pointer', borderRadius: '5px' }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2.5 4h11" /><path d="M6.5 4V2.5h3V4" /><path d="M4 4l.7 9h6.6L12 4" />
-                    </svg>
-                  </button>
+                  <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {level < 2 && (
+                        <button
+                          data-export="add-child-btn"
+                          onClick={() => onAddSubtask(i)}
+                          title="Agregar subtarea"
+                          style={{ flexShrink: 0, width: '24px', height: '24px', borderRadius: '6px', border: `1.5px solid ${colors.border}`, background: colors.surface, color: colors.primaryDark, font: `600 14px ${fonts.body}`, cursor: 'pointer', lineHeight: 1 }}
+                        >
+                          +
+                        </button>
+                      )}
+                      <button
+                        data-export="delete-row-btn"
+                        className="delete-row-btn"
+                        onClick={() => onDeleteTask(i)}
+                        title="Eliminar fila"
+                        style={{ flexShrink: 0, width: '20px', height: '20px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: colors.textFaint, cursor: 'pointer', borderRadius: '5px' }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M2.5 4h11" /><path d="M6.5 4V2.5h3V4" /><path d="M4 4l.7 9h6.6L12 4" />
+                        </svg>
+                      </button>
+                    </div>
+                    {isParent && (
+                      <div
+                        style={{
+                          font: `600 10px ${fonts.body}`,
+                          color: headerFg,
+                          background: headerBg,
+                          borderRadius: '8px',
+                          minWidth: '16px',
+                          height: '14px',
+                          padding: '0 4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {childCount}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div style={{ padding: '10px 4px', alignSelf: 'center' }}>
+                <div style={stickyCellStyle(STICKY_LEFT.duration, { padding: '10px 4px', alignSelf: 'center' })}>
                   <input
                     type="number"
                     min={1}
@@ -302,7 +351,7 @@ export default function GanttTable({
                     style={{ width: '56px', padding: '6px 8px', border: `1.5px solid ${colors.border}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text }}
                   />
                 </div>
-                <div style={{ padding: '10px 4px', alignSelf: 'center' }}>
+                <div style={stickyCellStyle(STICKY_LEFT.dep, { padding: '10px 4px', alignSelf: 'center' })}>
                   <select
                     value={t.dependency || ''}
                     onChange={(e) => onUpdateTask(i, { dependency: e.target.value })}
@@ -321,6 +370,15 @@ export default function GanttTable({
                 <div data-export="cell-fecha-fin" style={{ padding: '10px 4px', fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, alignSelf: 'center' }}>
                   {offsetDateStr(t.end)}
                 </div>
+                <div data-export="cell-responsable" style={{ padding: '10px 4px', alignSelf: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="Nombre"
+                    value={t.responsible || ''}
+                    onChange={(e) => onUpdateTask(i, { responsible: e.target.value })}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', border: `1.5px solid ${colors.border}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text }}
+                  />
+                </div>
                 <div style={{ padding: '10px 4px', position: 'relative', height: '28px', alignSelf: 'center' }}>
                   <div
                     style={{
@@ -329,7 +387,7 @@ export default function GanttTable({
                       left: 0,
                       height: '100%',
                       width: gridWidth + 'px',
-                      backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${CELL_WIDTH - 1}px, ${colors.border} ${CELL_WIDTH - 1}px, ${colors.border} ${CELL_WIDTH}px)`,
+                      backgroundImage: `${shadeGradient}, repeating-linear-gradient(to right, transparent 0, transparent ${CELL_WIDTH - 1}px, ${colors.border} ${CELL_WIDTH - 1}px, ${colors.border} ${CELL_WIDTH}px)`,
                     }}
                   />
                   <div
