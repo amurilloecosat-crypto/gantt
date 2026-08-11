@@ -412,6 +412,16 @@ export default function ProjectDetail() {
     return Math.max(onScreen, ganttWidth + 66); // 32px de padding a cada lado + bordes
   }
 
+  function exportScale(rawWidth, rawHeight) {
+    // Limita la resolución del canvas en proyectos muy grandes para no exceder el límite de
+    // 14400px de jsPDF ni el tamaño máximo de string que puede generar el navegador al codificar el PNG.
+    const MAX_DIMENSION = 8000;
+    const MAX_PIXELS = 30_000_000;
+    let scale = Math.min(2, MAX_DIMENSION / rawWidth, MAX_DIMENSION / rawHeight);
+    scale = Math.min(scale, Math.sqrt(MAX_PIXELS / (rawWidth * rawHeight)));
+    return Math.max(0.4, scale);
+  }
+
   function prepareExportClone(clonedDoc, fullWidth) {
     const hasStart = !!project.startDate;
     const hasResponsible = (project.tasks || []).some((t) => (t.responsible || '').trim());
@@ -462,7 +472,8 @@ export default function ProjectDetail() {
   async function exportPng() {
     if (!exportRef.current) return;
     const fullWidth = exportContentWidth();
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale: 2, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
+    const scale = exportScale(fullWidth, exportRef.current.offsetHeight);
+    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
     const link = document.createElement('a');
     link.download = (project.name || 'proyecto') + '.png';
     link.href = canvas.toDataURL('image/png');
@@ -472,7 +483,8 @@ export default function ProjectDetail() {
   async function exportPdf() {
     if (!exportRef.current) return;
     const fullWidth = exportContentWidth();
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale: 2, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
+    const scale = exportScale(fullWidth, exportRef.current.offsetHeight);
+    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
     // Siempre horizontal: la hoja se dimensiona al contenido, con el lado largo en el ancho.
     const h = canvas.height;
     const w = Math.max(canvas.width, Math.round(h * 1.5));
