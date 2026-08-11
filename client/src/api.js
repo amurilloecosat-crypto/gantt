@@ -23,6 +23,7 @@ function serialize(row) {
     deliverables: row.deliverables || [],
     headerBg: row.header_bg || '#F5F8F7',
     headerFg: row.header_fg || '#475A52',
+    guidePosition: typeof row.guide_position === 'number' ? row.guide_position : 0,
     lastModified: formatDate(row.updated_at),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -74,6 +75,7 @@ export const api = {
     if (patch.deliverables !== undefined) dbPatch.deliverables = patch.deliverables;
     if (patch.headerBg !== undefined) dbPatch.header_bg = String(patch.headerBg);
     if (patch.headerFg !== undefined) dbPatch.header_fg = String(patch.headerFg);
+    if (patch.guidePosition !== undefined) dbPatch.guide_position = Number(patch.guidePosition) || 0;
     dbPatch.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase.from('projects').update(dbPatch).eq('id', id).select().maybeSingle();

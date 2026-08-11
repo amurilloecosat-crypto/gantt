@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { colors, fonts } from '../theme.js';
 import {
   buildShadeGradient,
@@ -49,7 +49,26 @@ export default function GanttTable({
   onRowDragEnd,
   onBarDragStart,
   onBarContextMenu,
+  guidePosition,
+  onSetGuidePosition,
+  onGuideDragStart,
 }) {
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    // Shift+scroll desplaza el Gantt lateralmente. Se usa un listener nativo no-pasivo
+    // porque React adjunta onWheel como pasivo, y preventDefault ahí no evita el scroll normal.
+    const handleWheel = (e) => {
+      if (!e.shiftKey) return;
+      e.preventDefault();
+      el.scrollLeft = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, el.scrollLeft + e.deltaY));
+    };
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, []);
+
   const baseDate = startDate ? new Date(startDate + 'T00:00:00') : null;
   const scheduled = computeSchedule(tasks);
   const numbers = computeNumbers(tasks);
@@ -61,6 +80,7 @@ export default function GanttTable({
   const hasResponsible = tasks.some((t) => (t.responsible || '').trim());
   const { laneOf, laneCount } = computeDeliverableLanes(deliverables, CELL_WIDTH);
   const shadeGradient = buildShadeGradient(CELL_WIDTH, maxEnd, unit, excludeWeekends);
+  const guidePos = typeof guidePosition === 'number' ? guidePosition : 0;
 
   const headerCellStyle = {
     padding: '10px 4px',
@@ -122,7 +142,7 @@ export default function GanttTable({
         </div>
       </div>
 
-      <div data-export="gantt-scroll" style={{ border: `1px solid ${colors.border}`, borderRadius: '14px', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '26px', background: colors.surface }}>
+      <div ref={scrollRef} data-export="gantt-scroll" style={{ border: `1px solid ${colors.border}`, borderRadius: '14px', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '26px', background: colors.surface }}>
         <div
           style={{
             display: 'grid',
@@ -148,7 +168,11 @@ export default function GanttTable({
           <div style={{ ...headerCellStyle, gridRow: 2, gridColumn: 9 }}>
             <div style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: `${CELL_WIDTH}px`, backgroundImage: shadeGradient }}>
               {ganttColumns.map((col) => (
-                <div key={col} style={{ textAlign: 'center', borderLeft: `1px solid ${colors.border}` }}>
+                <div
+                  key={col}
+                  onClick={() => onSetGuidePosition(col)}
+                  style={{ textAlign: 'center', borderLeft: `1px solid ${colors.border}`, cursor: 'pointer' }}
+                >
                   {col}
                 </div>
               ))}
@@ -481,6 +505,28 @@ export default function GanttTable({
                 </div>
               );
             })}
+          </div>
+
+          <div
+            data-export="edit-guide"
+            onMouseDown={(e) => onGuideDragStart(guidePos, CELL_WIDTH, maxEnd, e)}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: FIXED_COLS_WIDTH + guidePos * CELL_WIDTH - 5 + 'px',
+              width: '10px',
+              height: '100%',
+              cursor: 'ew-resize',
+              zIndex: 5,
+              display: 'flex',
+              justifyContent: 'center',
+              pointerEvents: 'auto',
+            }}
+          >
+            <div style={{ width: '6px', height: '100%', background: '#000000', borderRadius: '1px', display: 'flex', overflow: 'hidden', boxSizing: 'border-box', padding: '0 1.5px' }}>
+              <div style={{ flex: 1, background: '#DC2626' }} />
+              <div style={{ flex: 1, background: '#FACC15' }} />
+            </div>
           </div>
         </div>
       </div>

@@ -13,6 +13,7 @@ create table if not exists public.projects (
   deliverables jsonb not null default '[]'::jsonb,
   header_bg text not null default '#F5F8F7',
   header_fg text not null default '#475A52',
+  guide_position integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

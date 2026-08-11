@@ -46,7 +46,7 @@ export default function ProjectDetail() {
     let cancelled = false;
     api
       .getProject(id)
-      .then(({ project }) => !cancelled && setProject({ deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', ...project }))
+      .then(({ project }) => !cancelled && setProject({ deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', guidePosition: 0, ...project }))
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -69,6 +69,7 @@ export default function ProjectDetail() {
             deliverables: nextProject.deliverables,
             headerBg: nextProject.headerBg,
             headerFg: nextProject.headerFg,
+            guidePosition: nextProject.guidePosition,
           })
           .catch((err) => setError(err.message));
       }, 500);
@@ -97,7 +98,8 @@ export default function ProjectDetail() {
   function addTask() {
     setProject((prev) => {
       const tasks = prev.tasks.slice();
-      tasks.push({ id: 't' + Date.now(), name: 'Nueva tarea', parentId: null, duration: 1, dependency: '', manualStart: 0, color: '#00A887' });
+      const guidePosition = typeof prev.guidePosition === 'number' ? prev.guidePosition : 0;
+      tasks.push({ id: 't' + Date.now(), name: 'Nueva tarea', parentId: null, duration: 1, dependency: '', manualStart: guidePosition, color: '#00A887' });
       const next = { ...prev, tasks };
       scheduleSave(next);
       return next;
@@ -108,13 +110,34 @@ export default function ProjectDetail() {
     setProject((prev) => {
       const tasks = prev.tasks.slice();
       if (taskLevel(tasks[index].id, tasks) >= 2) return prev;
+      const guidePosition = typeof prev.guidePosition === 'number' ? prev.guidePosition : 0;
       const subtreeIdx = getSubtreeIndices(index, tasks);
       const insertAt = subtreeIdx[subtreeIdx.length - 1] + 1;
-      tasks.splice(insertAt, 0, { id: 't' + Date.now(), name: 'Nueva subtarea', parentId: tasks[index].id, duration: 1, dependency: '', manualStart: 0 });
+      tasks.splice(insertAt, 0, { id: 't' + Date.now(), name: 'Nueva subtarea', parentId: tasks[index].id, duration: 1, dependency: '', manualStart: guidePosition });
       const next = { ...prev, tasks };
       scheduleSave(next);
       return next;
     });
+  }
+
+  function setGuidePosition(pos) {
+    patchProject({ guidePosition: pos });
+  }
+
+  function startGuideDrag(originalPosition, cellWidth, maxEnd, e) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const onMove = (ev) => {
+      const deltaUnits = Math.round((ev.clientX - startX) / cellWidth);
+      const next = Math.max(0, Math.min(maxEnd, originalPosition + deltaUnits));
+      patchProject({ guidePosition: next });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   function deleteTask(index) {
@@ -194,8 +217,18 @@ export default function ProjectDetail() {
     const scheduledById = {};
     computeSchedule(tasks).forEach((s) => { scheduledById[s.id] = s; });
     const originalStarts = subtreeIdx.map((i) => scheduledById[tasks[i].id].start);
-    const onMove = (ev) => {
-      const deltaUnits = Math.round((ev.clientX - startX) / cellWidth);
+
+    // Auto-scroll: si el cursor se acerca a la orilla del área con scroll, esta se
+    // desplaza sola mientras se sigue arrastrando (más rápido mientras más cerca del borde).
+    const scrollEl = e.target.closest('[data-export="gantt-scroll"]');
+    const EDGE = 60;
+    const MAX_SPEED = 18;
+    let scrollAccum = 0;
+    let lastClientX = startX;
+    let rafId = null;
+
+    const applyMove = (clientX) => {
+      const deltaUnits = Math.round((clientX - startX + scrollAccum) / cellWidth);
       let next = Math.max(0, originalStart + deltaUnits);
       if (bounds) next = Math.min(Math.max(next, bounds.start), Math.max(bounds.start, bounds.end - duration));
       const delta = next - originalStart;
@@ -209,12 +242,40 @@ export default function ProjectDetail() {
         return nextProject;
       });
     };
+
+    const autoScrollStep = () => {
+      if (!scrollEl) {
+        rafId = null;
+        return;
+      }
+      const rect = scrollEl.getBoundingClientRect();
+      let speed = 0;
+      if (lastClientX < rect.left + EDGE) {
+        speed = -Math.ceil(((rect.left + EDGE - lastClientX) / EDGE) * MAX_SPEED);
+      } else if (lastClientX > rect.right - EDGE) {
+        speed = Math.ceil(((lastClientX - (rect.right - EDGE)) / EDGE) * MAX_SPEED);
+      }
+      if (speed !== 0) {
+        const before = scrollEl.scrollLeft;
+        scrollEl.scrollLeft = Math.max(0, Math.min(scrollEl.scrollWidth, before + speed));
+        scrollAccum += scrollEl.scrollLeft - before;
+        applyMove(lastClientX);
+      }
+      rafId = requestAnimationFrame(autoScrollStep);
+    };
+
+    const onMove = (ev) => {
+      lastClientX = ev.clientX;
+      applyMove(ev.clientX);
+    };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      if (rafId) cancelAnimationFrame(rafId);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    rafId = requestAnimationFrame(autoScrollStep);
   }
 
   function selectBarColor(target, color) {
@@ -376,6 +437,7 @@ export default function ProjectDetail() {
     hide('[data-export="add-child-btn"]');
     hide('[data-export="delete-row-btn"]');
     hide('[data-export="collapse-btn"]');
+    hide('[data-export="edit-guide"]');
     clonedDoc.querySelectorAll('[data-export="drag-handle"]').forEach((el) => { el.style.visibility = 'hidden'; });
     clonedDoc.querySelectorAll('[data-export="notes-box"]').forEach((el) => { el.style.border = 'none'; });
     clonedDoc.querySelectorAll('input, select, textarea, [contenteditable="true"]').forEach((el) => {
@@ -561,6 +623,9 @@ export default function ProjectDetail() {
               setColorPickerFor('all:tasks');
               setColorPickerPos({ x: r.left, y: r.bottom + 8 });
             }}
+            guidePosition={typeof project.guidePosition === 'number' ? project.guidePosition : 0}
+            onSetGuidePosition={setGuidePosition}
+            onGuideDragStart={startGuideDrag}
             onUpdateTask={updateTask}
             onAddTask={addTask}
             onAddSubtask={addSubtask}
