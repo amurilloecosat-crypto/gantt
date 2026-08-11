@@ -187,8 +187,13 @@ export default function ProjectDetail() {
     const bounds = getParentBounds(task.id, tasks);
     const duration = Number(task.duration || 0);
     // Arrastrar un padre o subitem mueve toda su rama junta, conservando el acomodo relativo.
+    // Usamos el inicio ya acotado (computeSchedule), no el manualStart crudo: si el crudo excede
+    // el rango válido del padre, sumarle un pequeño delta no cambia el resultado acotado y la
+    // barra parece no moverse nunca.
     const subtreeIdx = getSubtreeIndices(rowIndex, tasks);
-    const originalStarts = subtreeIdx.map((i) => Number(tasks[i].manualStart || 0));
+    const scheduledById = {};
+    computeSchedule(tasks).forEach((s) => { scheduledById[s.id] = s; });
+    const originalStarts = subtreeIdx.map((i) => scheduledById[tasks[i].id].start);
     const onMove = (ev) => {
       const deltaUnits = Math.round((ev.clientX - startX) / cellWidth);
       let next = Math.max(0, originalStart + deltaUnits);
