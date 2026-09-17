@@ -2,8 +2,9 @@ name: Supabase keep-alive
 
 on:
   schedule:
-    # Cada 3 días a las 09:00 UTC, para no acercarse al límite de 7 días de inactividad de Supabase.
-    - cron: '0 9 */3 * *'
+    # Todos los días a las 09:00 UTC. Supabase pausa tras 7 días sin actividad;
+    # un ping diario da margen amplio incluso si alguna ejecución se retrasa o falla.
+    - cron: '0 9 * * *'
   workflow_dispatch: {}
 
 jobs:
