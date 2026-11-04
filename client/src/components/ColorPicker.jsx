@@ -1,5 +1,6 @@
 import React from 'react';
 import { BAR_COLORS } from '../ganttUtils.js';
+import { colors } from '../theme.js';
 
 export default function ColorPicker({ position, onSelect, onClose }) {
   return (
@@ -10,11 +11,11 @@ export default function ColorPicker({ position, onSelect, onClose }) {
           position: 'fixed',
           top: position.y + 'px',
           left: position.x + 'px',
-          background: '#FFFFFF',
-          border: '1px solid #E2E8E5',
+          background: colors.surface,
+          border: `1px solid ${colors.border}`,
           borderRadius: '10px',
           padding: '10px',
-          boxShadow: '0 8px 20px rgba(15,26,22,.18)',
+          boxShadow: `0 8px 20px ${colors.shadow}`,
           zIndex: 200,
           display: 'flex',
           gap: '6px',

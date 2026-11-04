@@ -1,14 +1,25 @@
+// Los colores son variables CSS: cambian solas con data-theme (ver styles/global.css).
 export const colors = {
-  bg: '#F5F8F7',
-  surface: '#FFFFFF',
-  border: '#E2E8E5',
-  primary: '#00A887',
-  primaryDark: '#0D553F',
-  primaryTint: '#D6F2EB',
-  text: '#0F1A16',
-  textMuted: '#475A52',
-  textFaint: '#9BAAA4',
+  bg: 'var(--c-bg)',
+  surface: 'var(--c-surface)',
+  border: 'var(--c-border)',
+  inputBorder: 'var(--c-input-border)',
+  primary: 'var(--c-primary)',
+  primaryDark: 'var(--c-primary-dark)',
+  primaryStrong: 'var(--c-primary-strong)',
+  primaryTint: 'var(--c-primary-tint)',
+  text: 'var(--c-text)',
+  textMuted: 'var(--c-text-muted)',
+  textFaint: 'var(--c-text-faint)',
+  danger: 'var(--c-danger)',
+  dangerBg: 'var(--c-danger-bg)',
+  overlay: 'var(--c-overlay)',
+  hover: 'var(--c-hover)',
+  shadow: 'var(--c-shadow)',
 };
+
+// Valores reales de la superficie, para mezclas calculadas en JS (tintes de filas).
+export const surfaceHex = { light: '#FFFFFF', dark: '#151E1A' };
 
 export const fonts = {
   heading: "'Montserrat', sans-serif",

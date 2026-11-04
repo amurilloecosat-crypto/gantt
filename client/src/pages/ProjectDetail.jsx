@@ -7,17 +7,52 @@ import NotesEditor from '../components/NotesEditor.jsx';
 import GanttTable from '../components/GanttTable.jsx';
 import DeliverablesTable from '../components/DeliverablesTable.jsx';
 import ColorPicker from '../components/ColorPicker.jsx';
+import { ChangesModal, MembersModal } from '../components/CollabPanels.jsx';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import ecosatLogo from '../assets/ecosat-logo.png';
+import { useAuth } from '../AuthContext.jsx';
+import { useTheme } from '../ThemeContext.jsx';
 import { api } from '../api';
+import { useI18n, tr } from '../i18n.jsx';
+import { supabase } from '../supabaseClient';
+import { diffProject, mergeProject, projectsEqual, stripHtml } from '../collab.js';
 import { colors, fonts } from '../theme.js';
-import { computeProjectEndDateLabel, computeSchedule, getParentBounds, getSubtreeIndices, hasChildren, lightenColor, taskLevel } from '../ganttUtils.js';
+import { clampColumnLevel, computeProjectEndDateLabel, computeProjectSpan, computeSchedule, durationLabel, fixedColsWidth, formatShortDate, getParentBounds, getSubtreeIndices, hasChildren, isPaleColor, lightenColor, taskLevel } from '../ganttUtils.js';
+
+const COLUMN_LEVEL_KEY = 'ariadna.columnLevel';
+const EXPORT_STYLE_KEY = 'ariadna.exportStyle';
+
+function readExportStyle() {
+  try {
+    return window.localStorage.getItem(EXPORT_STYLE_KEY) === 'corporate' ? 'corporate' : 'insert';
+  } catch (err) {
+    return 'insert';
+  }
+}
+
+function readColumnLevel() {
+  try {
+    const raw = window.localStorage.getItem(COLUMN_LEVEL_KEY);
+    return raw === null ? 4 : clampColumnLevel(raw);
+  } catch (err) {
+    return 4;
+  }
+}
 
 const TIME_UNITS = ['Días', 'Semanas', 'Meses'];
+
+function unitLabel(unit) {
+  if (unit === 'Días') return tr('Días', 'Days');
+  if (unit === 'Semanas') return tr('Semanas', 'Weeks');
+  if (unit === 'Meses') return tr('Meses', 'Months');
+  return unit;
+}
 
 function unitButtonStyle(isActive) {
   return {
     padding: '9px 16px',
     borderRadius: '10px',
-    border: isActive ? `1.5px solid ${colors.primary}` : `1.5px solid ${colors.border}`,
+    border: isActive ? `1.5px solid ${colors.primary}` : `1.5px solid ${colors.inputBorder}`,
     background: isActive ? colors.primaryTint : colors.surface,
     color: isActive ? colors.primaryDark : colors.textMuted,
     font: `600 14px ${fonts.body}`,
@@ -37,44 +72,169 @@ export default function ProjectDetail() {
   const [colorPickerPos, setColorPickerPos] = useState({ x: 0, y: 0 });
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [columnLevel, setColumnLevelState] = useState(readColumnLevel);
+  const [saveStatus, setSaveStatus] = useState({ status: 'saved', at: null });
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportStyle, setExportStyleState] = useState(readExportStyle);
+  const [exporting, setExporting] = useState(null);
+  const [exportError, setExportError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const { user } = useAuth();
+  const { isDark, setTheme } = useTheme();
+  const { t, locale } = useI18n();
   const exportRef = useRef(null);
   const saveTimeout = useRef(null);
   const dragSourceId = useRef(null);
   const dragSourceDeliverableId = useRef(null);
+  const baseRef = useRef(null);
+  const latestRef = useRef(null);
+  const savingRef = useRef(false);
+  const rerunRef = useRef(false);
+  const remotePendingRef = useRef(false);
+  const membersRef = useRef([]);
+  const membersLoadedRef = useRef(false);
+  const userNameRef = useRef('');
+
+  membersRef.current = members;
+  userNameRef.current = user ? user.name : '';
+  const isShared = members.length > 1;
+  const isOwner = !!project && !!user && project.userId === user.id;
 
   useEffect(() => {
     let cancelled = false;
+    membersLoadedRef.current = false;
     api
       .getProject(id)
-      .then(({ project }) => !cancelled && setProject({ deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', guidePosition: 0, ...project }))
+      .then(({ project }) => {
+        if (cancelled) return;
+        const initial = { deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', guidePosition: 0, ...project };
+        baseRef.current = initial;
+        latestRef.current = initial;
+        setProject(initial);
+      })
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
+    const loadMembers = (retries) =>
+      api
+        .listMembers(id)
+        .then((list) => {
+          if (cancelled) return;
+          membersLoadedRef.current = true;
+          setMembers(list);
+        })
+        .catch(() => {
+          if (retries > 0 && !cancelled) setTimeout(() => loadMembers(retries - 1), 1500);
+        });
+    loadMembers(2);
     return () => {
       cancelled = true;
     };
   }, [id]);
 
+  // Trae la versión del servidor y la fusiona con lo que tengo en pantalla sin perder mis cambios sin guardar.
+  const applyRemote = useCallback(async () => {
+    if (savingRef.current) {
+      remotePendingRef.current = true;
+      return;
+    }
+    try {
+      const { project: fetched } = await api.getProject(id);
+      const base = baseRef.current;
+      const mine = latestRef.current;
+      if (!base || !mine || fetched.updatedAt === base.updatedAt) return;
+      const theirs = { deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', guidePosition: 0, ...fetched };
+      const merged = mergeProject(base, mine, theirs);
+      const active = document.activeElement;
+      if (active && active.closest && active.closest('[data-export="notes-wrap"]')) merged.notesHtml = mine.notesHtml;
+      baseRef.current = theirs;
+      latestRef.current = merged;
+      if (!projectsEqual(merged, mine)) setProject(merged);
+    } catch (err) {
+      if (['Proyecto no encontrado', 'Project not found'].includes(err.message)) setError(t('Este proyecto fue eliminado o ya no tienes acceso.', 'This project was deleted or you no longer have access.'));
+    }
+  }, [id]);
+
+  const flushSave = useCallback(async () => {
+    if (savingRef.current) {
+      rerunRef.current = true;
+      return;
+    }
+    const mine = latestRef.current;
+    const base = baseRef.current;
+    if (!mine || !base || (projectsEqual(mine, base) && mine.guidePosition === base.guidePosition)) return;
+    savingRef.current = true;
+    setSaveStatus({ status: 'saving', at: null });
+    try {
+      let shared = membersRef.current.length > 1;
+      if (!shared && !membersLoadedRef.current) {
+        try {
+          const list = await api.listMembers(id);
+          membersLoadedRef.current = true;
+          setMembers(list);
+          shared = list.length > 1;
+        } catch (err) {
+          shared = false;
+        }
+      }
+      const changes = shared ? diffProject(base, mine) : [];
+      const { saved, written } = await api.saveProjectMerged(id, base, mine);
+      baseRef.current = { deliverables: [], headerBg: '#F5F8F7', headerFg: '#475A52', guidePosition: 0, ...saved };
+      setSaveStatus({ status: 'saved', at: new Date() });
+      if (!projectsEqual(written, mine)) {
+        const merged = mergeProject(mine, latestRef.current, written);
+        latestRef.current = merged;
+        setProject(merged);
+      }
+      if (changes.length) {
+        api.addChanges(id, changes, userNameRef.current).catch((err) => {
+          console.warn('addChanges', err);
+          setError(t('No se pudo registrar en la bitácora: ', 'Could not record in the change log: ') + err.message);
+        });
+      }
+    } catch (err) {
+      setSaveStatus({ status: 'error', at: null });
+      setError(err.message);
+    } finally {
+      savingRef.current = false;
+      if (rerunRef.current) {
+        rerunRef.current = false;
+        flushSave();
+      } else if (remotePendingRef.current) {
+        remotePendingRef.current = false;
+        applyRemote();
+      }
+    }
+  }, [id, applyRemote]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`project-${id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `id=eq.${id}` }, () => applyRemote())
+      .subscribe();
+    const poll = setInterval(async () => {
+      try {
+        const updatedAt = await api.getProjectUpdatedAt(id);
+        if (updatedAt && baseRef.current && updatedAt !== baseRef.current.updatedAt) applyRemote();
+      } catch (err) {
+        // El siguiente ciclo reintenta.
+      }
+    }, 30000);
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(poll);
+    };
+  }, [id, applyRemote]);
+
   const scheduleSave = useCallback(
     (nextProject) => {
+      latestRef.current = nextProject;
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
-      saveTimeout.current = setTimeout(() => {
-        api
-          .updateProject(id, {
-            name: nextProject.name,
-            unit: nextProject.unit,
-            startDate: nextProject.startDate,
-            excludeWeekends: nextProject.excludeWeekends,
-            notesHtml: nextProject.notesHtml,
-            tasks: nextProject.tasks,
-            deliverables: nextProject.deliverables,
-            headerBg: nextProject.headerBg,
-            headerFg: nextProject.headerFg,
-            guidePosition: nextProject.guidePosition,
-          })
-          .catch((err) => setError(err.message));
-      }, 500);
+      saveTimeout.current = setTimeout(flushSave, 500);
     },
-    [id]
+    [flushSave]
   );
 
   function patchProject(patch) {
@@ -99,7 +259,7 @@ export default function ProjectDetail() {
     setProject((prev) => {
       const tasks = prev.tasks.slice();
       const guidePosition = typeof prev.guidePosition === 'number' ? prev.guidePosition : 0;
-      tasks.push({ id: 't' + Date.now(), name: 'Nueva tarea', parentId: null, duration: 1, dependency: '', manualStart: guidePosition, color: '#00A887' });
+      tasks.push({ id: 't' + Date.now(), name: tr('Nueva tarea', 'New task'), parentId: null, duration: 1, dependency: '', manualStart: guidePosition, color: '#00A887' });
       const next = { ...prev, tasks };
       scheduleSave(next);
       return next;
@@ -113,11 +273,21 @@ export default function ProjectDetail() {
       const guidePosition = typeof prev.guidePosition === 'number' ? prev.guidePosition : 0;
       const subtreeIdx = getSubtreeIndices(index, tasks);
       const insertAt = subtreeIdx[subtreeIdx.length - 1] + 1;
-      tasks.splice(insertAt, 0, { id: 't' + Date.now(), name: 'Nueva subtarea', parentId: tasks[index].id, duration: 1, dependency: '', manualStart: guidePosition });
+      tasks.splice(insertAt, 0, { id: 't' + Date.now(), name: tr('Nueva subtarea', 'New subtask'), parentId: tasks[index].id, duration: 1, dependency: '', manualStart: guidePosition });
       const next = { ...prev, tasks };
       scheduleSave(next);
       return next;
     });
+  }
+
+  function setColumnLevel(level) {
+    const next = clampColumnLevel(level);
+    setColumnLevelState(next);
+    try {
+      window.localStorage.setItem(COLUMN_LEVEL_KEY, String(next));
+    } catch (err) {
+      // Sin almacenamiento: la vista simplemente no se recuerda.
+    }
   }
 
   function setGuidePosition(pos) {
@@ -138,6 +308,26 @@ export default function ProjectDetail() {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  }
+
+  function requestDeleteTask(index) {
+    const tasks = project.tasks;
+    const task = tasks[index];
+    const name = stripHtml(task.name);
+    const childCount = getSubtreeIndices(index, tasks).length - 1;
+    const isUntouched = !name || ['Nueva tarea', 'Nueva subtarea', 'New task', 'New subtask'].includes(name);
+    if (childCount === 0 && isUntouched) {
+      deleteTask(index);
+      return;
+    }
+    setConfirmDelete({ id: task.id, name: name || t('Sin nombre', 'Unnamed'), childCount });
+  }
+
+  function confirmDeleteTask() {
+    if (!confirmDelete) return;
+    const index = project.tasks.findIndex((t) => t.id === confirmDelete.id);
+    setConfirmDelete(null);
+    if (index !== -1) deleteTask(index);
   }
 
   function deleteTask(index) {
@@ -405,11 +595,17 @@ export default function ProjectDetail() {
     window.addEventListener('mouseup', onUp);
   }
 
+  // La etiqueta de un entregable que cae en el último periodo se sale del borde derecho; solo entonces se reserva espacio.
+  function exportNeedsRightRoom() {
+    const units = Math.max(1, ...computeSchedule(project.tasks || []).map((t) => t.end));
+    return (project.deliverables || []).some((d) => (typeof d.position === 'number' ? d.position : 0) >= units - 1);
+  }
+
   function exportContentWidth() {
     const units = Math.max(1, ...computeSchedule(project.tasks || []).map((t) => t.end));
-    const ganttWidth = 850 + units * 48;
+    const ganttWidth = fixedColsWidth(columnLevel) + units * 48;
     const onScreen = exportRef.current ? exportRef.current.offsetWidth : 0;
-    return Math.max(onScreen, ganttWidth + 66); // 32px de padding a cada lado + bordes
+    return Math.max(onScreen, ganttWidth + 66 + (exportNeedsRightRoom() ? 48 : 0)); // padding del contenedor + bordes + holgura para la etiqueta del último entregable
   }
 
   function exportScale(rawWidth, rawHeight) {
@@ -422,7 +618,16 @@ export default function ProjectDetail() {
     return Math.max(0.4, scale);
   }
 
-  function prepareExportClone(clonedDoc, fullWidth) {
+  function setExportStyle(style) {
+    setExportStyleState(style);
+    try {
+      window.localStorage.setItem(EXPORT_STYLE_KEY, style);
+    } catch (err) {
+      // Sin almacenamiento: el estilo no se recuerda.
+    }
+  }
+
+  function prepareExportClone(clonedDoc, fullWidth, style) {
     const hasStart = !!project.startDate;
     const hasResponsible = (project.tasks || []).some((t) => (t.responsible || '').trim());
     const hide = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.display = 'none'; });
@@ -431,8 +636,6 @@ export default function ProjectDetail() {
     // visibility:hidden las deja invisibles pero conserva su espacio en el grid.
     const hideKeepingLayout = (sel) => clonedDoc.querySelectorAll(sel).forEach((el) => { el.style.visibility = 'hidden'; });
     if (!hasStart) {
-      hide('[data-export="start-date-field"]');
-      hide('[data-export="end-date-field"]');
       hideKeepingLayout('[data-export="col-fecha-inicio"]');
       hideKeepingLayout('[data-export="col-fecha-fin"]');
       hideKeepingLayout('[data-export="cell-fecha-inicio"]');
@@ -442,62 +645,142 @@ export default function ProjectDetail() {
       hideKeepingLayout('[data-export="col-responsable"]');
       hideKeepingLayout('[data-export="cell-responsable"]');
     }
+    // Ninguno de los dos estilos incluye el formulario de unidad y fechas.
+    hide('[data-export="form-block"]');
+    hide('[data-export="notes-hint"]');
     hide('[data-export="notes-toolbar"]');
     hide('[data-export="add-row-btn"]');
     hide('[data-export="add-child-btn"]');
     hide('[data-export="delete-row-btn"]');
     hide('[data-export="collapse-btn"]');
     hide('[data-export="edit-guide"]');
+    hide('[data-export="col-resizer"]');
     clonedDoc.querySelectorAll('[data-export="drag-handle"]').forEach((el) => { el.style.visibility = 'hidden'; });
     clonedDoc.querySelectorAll('[data-export="notes-box"]').forEach((el) => { el.style.border = 'none'; });
+    // En el exportable las listas desplegables se vuelven texto; sin dependencia se muestra un guion.
+    const liveSelects = exportRef.current ? Array.from(exportRef.current.querySelectorAll('select')) : [];
+    clonedDoc.querySelectorAll('select').forEach((sel, idx) => {
+      const live = liveSelects[idx];
+      const span = clonedDoc.createElement('span');
+      span.textContent = live && live.value ? live.options[live.selectedIndex].text : '—';
+      span.style.fontFamily = 'inherit';
+      span.style.fontSize = '14px';
+      span.style.padding = '6px 8px';
+      span.style.display = 'inline-block';
+      sel.replaceWith(span);
+    });
     clonedDoc.querySelectorAll('input, select, textarea, [contenteditable="true"]').forEach((el) => {
       el.style.border = 'none';
       el.style.background = 'transparent';
       el.style.boxShadow = 'none';
     });
+    if (style === 'corporate') {
+      clonedDoc.querySelectorAll('[data-export="corp-header"], [data-export="corp-footer"]').forEach((el) => { el.style.display = 'flex'; });
+    }
     // El exportable se despliega a su ancho real: el Gantt completo sin scroll y las Notas a todo lo ancho.
     const root = clonedDoc.querySelector('[data-export="export-root"]');
-    if (root && fullWidth) {
-      root.style.width = fullWidth + 'px';
-      root.style.maxWidth = 'none';
+    if (root) {
+      root.style.padding = style === 'corporate' ? '32px' : '12px';
+      if (fullWidth) {
+        root.style.width = fullWidth + 'px';
+        root.style.maxWidth = 'none';
+      }
     }
     clonedDoc.querySelectorAll('[data-export="gantt-scroll"]').forEach((el) => {
       el.style.overflow = 'visible';
+      el.style.paddingRight = exportNeedsRightRoom() ? '48px' : '0px';
       el.style.width = 'max-content';
       el.style.minWidth = '100%';
     });
     clonedDoc.querySelectorAll('[data-export="notes-wrap"]').forEach((el) => { el.style.maxWidth = 'none'; });
   }
 
-  async function exportPng() {
-    if (!exportRef.current) return;
-    const fullWidth = exportContentWidth();
-    const scale = exportScale(fullWidth, exportRef.current.offsetHeight);
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: colors.bg, scale, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
+  async function downloadDocx(canvas, baseName) {
+    const { Document, Packer, Paragraph, ImageRun, PageOrientation } = await import('docx');
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const data = new Uint8Array(await blob.arrayBuffer());
+    // Hoja carta apaisada con márgenes de 0.5": 960 x 700 px útiles a 96 dpi.
+    const ratio = Math.min(960 / canvas.width, 700 / canvas.height);
+    const doc = new Document({
+      sections: [
+        {
+          properties: { page: { size: { width: 12240, height: 15840, orientation: PageOrientation.LANDSCAPE }, margin: { top: 720, right: 720, bottom: 720, left: 720 } } },
+          children: [
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  type: 'png',
+                  data,
+                  transformation: { width: Math.round(canvas.width * ratio), height: Math.round(canvas.height * ratio) },
+                  altText: { name: tr('Cronograma', 'Schedule'), title: tr('Cronograma', 'Schedule'), description: tr('Cronograma del proyecto', 'Project schedule') },
+                }),
+              ],
+            }),
+          ],
+        },
+      ],
+    });
+    const out = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(out);
     const link = document.createElement('a');
-    link.download = (project.name || 'proyecto') + '.png';
-    link.href = canvas.toDataURL('image/png');
+    link.download = baseName + '.docx';
+    link.href = url;
     link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
-  async function exportPdf() {
-    if (!exportRef.current) return;
-    const fullWidth = exportContentWidth();
-    const scale = exportScale(fullWidth, exportRef.current.offsetHeight);
-    const canvas = await html2canvas(exportRef.current, { backgroundColor: '#FFFFFF', scale, width: fullWidth, windowWidth: fullWidth + 40, onclone: (doc) => prepareExportClone(doc, fullWidth) });
-    // Siempre horizontal: la hoja se dimensiona al contenido, con el lado largo en el ancho.
-    const h = canvas.height;
-    const w = Math.max(canvas.width, Math.round(h * 1.5));
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [w, h] });
-    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', (w - canvas.width) / 2, 0, canvas.width, canvas.height);
-    pdf.save((project.name || 'proyecto') + '.pdf');
+  async function runExport(kind) {
+    if (!exportRef.current || exporting) return;
+    setExporting(kind);
+    setExportError('');
+    // El exportable siempre sale en tema claro: se cambia un momento sin tocar la preferencia guardada.
+    const restoreDark = isDark;
+    if (restoreDark) {
+      setTheme('light', false);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    try {
+      const style = kind === 'pdf' ? 'corporate' : kind === 'docx' ? 'insert' : exportStyle;
+      const fullWidth = exportContentWidth();
+      const scale = exportScale(fullWidth, exportRef.current.offsetHeight);
+      const canvas = await html2canvas(exportRef.current, {
+        backgroundColor: '#FFFFFF',
+        scale,
+        width: fullWidth,
+        windowWidth: fullWidth + 40,
+        onclone: (doc) => prepareExportClone(doc, fullWidth, style),
+      });
+      const baseName = ((stripHtml(project.name) || t('proyecto', 'project')).replace(/[\\/:*?"<>|]/g, '-') + (style === 'corporate' ? t(' - Anexo', ' - Appendix') : '')).trim();
+      if (kind === 'docx') {
+        await downloadDocx(canvas, baseName);
+      } else if (kind === 'png') {
+        const link = document.createElement('a');
+        link.download = baseName + '.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      } else {
+        // Siempre horizontal: la hoja se dimensiona al contenido, con el lado largo en el ancho.
+        const h = canvas.height;
+        const w = Math.max(canvas.width, Math.round(h * 1.5));
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [w, h], compress: true });
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', (w - canvas.width) / 2, 0, canvas.width, canvas.height, undefined, 'FAST');
+        pdf.save(baseName + '.pdf');
+      }
+      setExportOpen(false);
+    } catch (err) {
+      console.warn('export', err);
+      setExportError(t('No pudimos generar el archivo. Si el plan es muy grande, prueba con la imagen PNG.', 'We could not generate the file. If the plan is very large, try the PNG image.'));
+    } finally {
+      if (restoreDark) setTheme('dark', false);
+      setExporting(null);
+    }
   }
 
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', background: colors.bg, fontFamily: fonts.body }}>
         <Header />
-        <div style={{ padding: '40px 32px', color: colors.textMuted }}>Cargando proyecto...</div>
+        <div style={{ padding: '40px 32px', color: colors.textMuted }}>{t('Cargando proyecto...', 'Loading project...')}</div>
       </div>
     );
   }
@@ -506,15 +789,26 @@ export default function ProjectDetail() {
     return (
       <div style={{ minHeight: '100vh', background: colors.bg, fontFamily: fonts.body }}>
         <Header />
-        <div style={{ padding: '40px 32px', color: '#DC2626' }}>{error}</div>
+        <div style={{ padding: '40px 32px', color: colors.danger }}>{error}</div>
       </div>
     );
   }
 
   const endDateLabel = computeProjectEndDateLabel(project);
+  const exportSpan = computeProjectSpan(project);
+  const exportSubtitle = [
+    durationLabel(exportSpan.units, project.unit),
+    project.startDate ? formatShortDate(project.startDate + 'T00:00:00') + ' → ' + (exportSpan.endDate ? formatShortDate(exportSpan.endDate) : '—') : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const showWeekendToggle = project.unit === 'Días';
-  const headerBg = project.headerBg || '#F5F8F7';
-  const headerFg = project.headerFg || '#475A52';
+  const savedHeaderBg = project.headerBg || '#F5F8F7';
+  const savedHeaderFg = project.headerFg || '#475A52';
+  // En tema oscuro, una cabecera casi blanca se adapta para no deslumbrar. La exportación siempre usa los colores guardados.
+  const darkAdapt = isDark && isPaleColor(savedHeaderBg);
+  const headerBg = darkAdapt ? '#1F2B26' : savedHeaderBg;
+  const headerFg = darkAdapt ? '#A5B8B0' : savedHeaderFg;
   const allTaskColorDot = (project.tasks || []).find((t) => !t.parentId && t.color)?.color || '#00A887';
   const allDelivColorDot = (project.deliverables || [])[0]?.color || '#DC2626';
   const rowTintPreviewStyle = { width: '22px', height: '22px', borderRadius: '6px', border: `1px solid ${colors.border}`, background: lightenColor(headerBg, 0.88), flexShrink: 0 };
@@ -523,87 +817,170 @@ export default function ProjectDetail() {
     <div style={{ minHeight: '100vh', background: colors.bg, fontFamily: fonts.body }}>
       <Header />
 
-      <div style={{ padding: '40px 32px' }}>
-        <button
-          onClick={() => navigate('/')}
-          style={{ background: 'transparent', border: 'none', color: colors.textMuted, font: `600 14px ${fonts.body}`, cursor: 'pointer', padding: 0, marginBottom: '24px' }}
-        >
-          ← Volver
-        </button>
+      <div style={{ padding: '32px 32px 40px' }}>
+        <nav aria-label={t('Ruta', 'Breadcrumb')} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', fontFamily: fonts.body, fontSize: '14px', minWidth: 0 }}>
+          <button
+            onClick={() => navigate('/')}
+            style={{ background: 'transparent', border: 'none', padding: 0, color: colors.primaryDark, font: `600 14px ${fonts.body}`, cursor: 'pointer', textDecoration: 'underline', flexShrink: 0 }}
+          >
+            {t('Mis proyectos', 'My projects')}
+          </button>
+          <span aria-hidden="true" style={{ color: colors.textFaint }}>/</span>
+          <span aria-current="page" style={{ color: colors.textMuted, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {stripHtml(project.name) || t('Proyecto sin nombre', 'Untitled project')}
+          </span>
+        </nav>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
-          <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '22px', color: colors.text }}>Detalle del proyecto</div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
+          <input
+            type="text"
+            aria-label={t('Nombre del proyecto', 'Project name')}
+            title={t('Haz clic para editar el nombre', 'Click to edit the name')}
+            className="project-title-input"
+            data-tour="project-title"
+            placeholder={t('Nombre del proyecto', 'Project name')}
+            value={project.name}
+            onChange={(e) => patchProject({ name: e.target.value })}
+            style={{ flex: '1 1 320px', minWidth: 0, boxSizing: 'border-box', padding: '6px 10px', border: '1.5px solid transparent', borderRadius: '10px', background: 'transparent', fontFamily: fonts.heading, fontWeight: 700, fontSize: '28px', lineHeight: 1.25, color: colors.text, textOverflow: 'ellipsis' }}
+          />
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="save-status"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                minWidth: '150px',
+                justifyContent: 'center',
+                padding: '7px 12px',
+                borderRadius: '999px',
+                font: `600 13px ${fonts.body}`,
+                background: saveStatus.status === 'error' ? colors.dangerBg : colors.bg,
+                color: saveStatus.status === 'error' ? colors.danger : colors.textMuted,
+              }}
+            >
+              {saveStatus.status === 'saving' && (
+                <>
+                  <span className="spin" aria-hidden="true" />
+                  {t('Guardando…', 'Saving…')}
+                </>
+              )}
+              {saveStatus.status === 'saved' && (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={colors.primaryDark} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 8.5 L6.5 12 L13 4.5" />
+                  </svg>
+                  {saveStatus.at ? `${t('Guardado', 'Saved')} · ${saveStatus.at.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}` : t('Todo guardado', 'All saved')}
+                </>
+              )}
+              {saveStatus.status === 'error' && (
+                <>
+                  {t('No se pudo guardar', 'Could not save')}
+                  <button
+                    onClick={flushSave}
+                    style={{ border: 'none', background: 'transparent', color: colors.danger, font: `700 13px ${fonts.body}`, textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
+                  >
+                    {t('Reintentar', 'Retry')}
+                  </button>
+                </>
+              )}
+            </div>
+            {isShared && (
+              <>
+                <button
+                  data-testid="open-members"
+                  onClick={() => setMembersOpen(true)}
+                  style={{ background: colors.primaryTint, color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+                >
+                  {t('Colaboradores', 'Collaborators')} ({members.length})
+                </button>
+                <button
+                  data-testid="open-changes"
+                  onClick={() => setChangesOpen(true)}
+                  style={{ background: colors.primaryTint, color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+                >
+                  {t('Bitácora', 'Change log')}
+                </button>
+              </>
+            )}
             <button
               onClick={() => setCustomizeOpen(true)}
               style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
             >
-              Personalizar
+              {t('Colores de tabla', 'Table colors')}
             </button>
             <button
-              onClick={exportPng}
-              style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
+              data-testid="open-export"
+              onClick={() => {
+                setExportError('');
+                setExportOpen(true);
+              }}
+              style={{ background: colors.primaryStrong, color: '#fff', border: 'none', borderRadius: '10px', padding: '9px 18px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
             >
-              Exportar PNG
-            </button>
-            <button
-              onClick={exportPdf}
-              style={{ background: colors.primary, color: '#fff', border: 'none', borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
-            >
-              Exportar PDF
+              {t('Exportar', 'Export')}
             </button>
           </div>
         </div>
 
-        {error && <div style={{ color: '#DC2626', marginBottom: '16px' }}>{error}</div>}
+        {error && <div style={{ color: colors.danger, marginBottom: '16px' }}>{error}</div>}
 
         <div ref={exportRef} data-export="export-root" style={{ padding: '32px', background: colors.surface }}>
-          <div style={{ maxWidth: '480px', marginBottom: '18px' }}>
-            <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Nombre</label>
-            <input
-              type="text"
-              value={project.name}
-              onChange={(e) => patchProject({ name: e.target.value })}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: `1.5px solid ${colors.border}`, borderRadius: '10px', fontFamily: fonts.body, fontSize: '15px', color: colors.text }}
-            />
-          </div>
-
-          <div style={{ maxWidth: '480px', marginBottom: '18px' }}>
-            <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Unidad de tiempo</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {TIME_UNITS.map((unit) => (
-                <button key={unit} onClick={() => patchProject({ unit })} style={unitButtonStyle(project.unit === unit)}>
-                  {unit}
-                </button>
-              ))}
-            </div>
-            {showWeekendToggle && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '14px' }}>
-                <div
-                  onClick={() => patchProject({ excludeWeekends: !project.excludeWeekends })}
-                  style={{ width: '36px', height: '20px', borderRadius: '10px', background: project.excludeWeekends ? colors.primary : colors.border, position: 'relative', cursor: 'pointer', transition: 'background .15s ease', flexShrink: 0 }}
-                >
-                  <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: '#FFFFFF', position: 'absolute', top: '2px', left: project.excludeWeekends ? '18px' : '2px', transition: 'left .15s ease', boxShadow: '0 1px 2px rgba(15,26,22,.25)' }} />
-                </div>
-                <span style={{ fontFamily: fonts.body, fontSize: '14px', color: colors.text }}>Descartar fines de semana</span>
+          <div data-export="corp-header" style={{ display: 'none', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '28px', lineHeight: 1.2, color: '#0C5641' }}>{stripHtml(project.name) || t('Proyecto sin nombre', 'Untitled project')}</div>
+                <div style={{ fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, marginTop: '4px' }}>{exportSubtitle}</div>
               </div>
-            )}
+              <img src={ecosatLogo} alt="Ecosat Technology Solutions" style={{ height: '44px', width: 'auto', flexShrink: 0 }} />
+            </div>
+            <div style={{ height: '3px', background: 'linear-gradient(90deg, #6FD9C3, #00A887, #0C5641)' }} />
           </div>
 
-          <div data-export="start-date-field" style={{ maxWidth: '480px', marginBottom: '18px' }}>
-            <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Fecha inicio</label>
-            <input
-              type="date"
-              value={project.startDate || ''}
-              onChange={(e) => patchProject({ startDate: e.target.value })}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: `1.5px solid ${colors.border}`, borderRadius: '10px', fontFamily: fonts.body, fontSize: '15px', color: colors.text }}
-            />
-          </div>
+          <div data-export="form-block" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '20px 32px', marginBottom: '22px' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>{t('Unidad de tiempo', 'Time unit')}</div>
+              <div role="radiogroup" aria-label={t('Unidad de tiempo', 'Time unit')} style={{ display: 'flex', gap: '8px' }}>
+                {TIME_UNITS.map((unit) => (
+                  <button key={unit} role="radio" aria-checked={project.unit === unit} onClick={() => patchProject({ unit })} style={unitButtonStyle(project.unit === unit)}>
+                    {unitLabel(unit)}
+                  </button>
+                ))}
+              </div>
+              <div style={{ font: `400 12px ${fonts.body}`, color: colors.textMuted, marginTop: '6px', maxWidth: '300px' }}>{t('Cómo se miden las duraciones del plan.', 'How plan durations are measured.')}</div>
+              {showWeekendToggle && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px' }}>
+                  <button
+                    role="switch"
+                    aria-checked={!!project.excludeWeekends}
+                    aria-label={t('No contar sábados ni domingos', 'Do not count Saturdays or Sundays')}
+                    onClick={() => patchProject({ excludeWeekends: !project.excludeWeekends })}
+                    style={{ width: '38px', height: '22px', padding: 0, border: 'none', borderRadius: '11px', background: project.excludeWeekends ? colors.primaryDark : colors.inputBorder, position: 'relative', cursor: 'pointer', transition: 'background .15s ease', flexShrink: 0 }}
+                  >
+                    <span style={{ width: '16px', height: '16px', borderRadius: '50%', background: '#FFFFFF', position: 'absolute', top: '3px', left: project.excludeWeekends ? '19px' : '3px', transition: 'left .15s ease', boxShadow: '0 1px 2px rgba(15,26,22,.25)' }} />
+                  </button>
+                  <span style={{ fontFamily: fonts.body, fontSize: '14px', color: colors.text }}>{t('No contar sábados ni domingos', 'Do not count Saturdays or Sundays')}</span>
+                </div>
+              )}
+            </div>
 
-          <div data-export="end-date-field" style={{ maxWidth: '480px', marginBottom: '18px' }}>
-            <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>Fecha fin</label>
-            <div style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: `1.5px solid ${colors.border}`, borderRadius: '10px', fontFamily: fonts.body, fontSize: '15px', color: colors.textMuted, background: colors.bg }}>
-              {endDateLabel}
+            <div data-export="start-date-field" style={{ width: '210px', maxWidth: '100%' }}>
+              <label htmlFor="project-start-date" style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>{t('Fecha de inicio (opcional)', 'Start date (optional)')}</label>
+              <input
+                id="project-start-date"
+                type="date"
+                value={project.startDate || ''}
+                onChange={(e) => patchProject({ startDate: e.target.value })}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: `1.5px solid ${colors.inputBorder}`, borderRadius: '10px', fontFamily: fonts.body, fontSize: '15px', color: colors.text }}
+              />
+            </div>
+
+            <div data-export="end-date-field" style={{ width: '210px', maxWidth: '100%' }}>
+              <div style={{ font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '6px' }}>{t('Fecha de fin (se calcula)', 'End date (calculated)')}</div>
+              <div style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: `1.5px solid ${colors.border}`, borderRadius: '10px', fontFamily: fonts.body, fontSize: '15px', color: colors.textMuted, background: colors.bg }}>
+                {endDateLabel}
+              </div>
             </div>
           </div>
 
@@ -638,10 +1015,12 @@ export default function ProjectDetail() {
             guidePosition={typeof project.guidePosition === 'number' ? project.guidePosition : 0}
             onSetGuidePosition={setGuidePosition}
             onGuideDragStart={startGuideDrag}
+            columnLevel={columnLevel}
+            onChangeColumnLevel={setColumnLevel}
             onUpdateTask={updateTask}
             onAddTask={addTask}
             onAddSubtask={addSubtask}
-            onDeleteTask={deleteTask}
+            onDeleteTask={requestDeleteTask}
             onRowDragStart={handleRowDragStart}
             onRowDragOver={handleRowDragOver}
             onRowDrop={handleRowDrop}
@@ -672,8 +1051,97 @@ export default function ProjectDetail() {
             onRowDrop={handleDeliverableDrop}
             onRowDragEnd={handleDeliverableDragEnd}
           />
+
+          <div
+            data-export="corp-footer"
+            style={{ display: 'none', justifyContent: 'space-between', gap: '16px', marginTop: '24px', paddingTop: '10px', borderTop: `1px solid ${colors.border}`, fontFamily: fonts.body, fontSize: '11px', color: colors.textMuted }}
+          >
+            <span>Ecosat Technology Solutions</span>
+            <span>{t('Generado el', 'Generated on')} {formatShortDate(new Date())}</span>
+          </div>
         </div>
       </div>
+
+      {exportOpen && (
+        <div
+          onClick={() => !exporting && setExportOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: colors.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 125 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('Exportar', 'Export')}
+            data-testid="export-dialog"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && !exporting && setExportOpen(false)}
+            style={{ background: colors.surface, borderRadius: '14px', padding: '28px', width: '520px', maxWidth: 'calc(100vw - 32px)', boxShadow: `0 8px 24px ${colors.shadow}` }}
+          >
+            <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '18px', color: colors.text, marginBottom: '6px' }}>{t('Exportar', 'Export')}</div>
+            <div style={{ fontFamily: fonts.body, fontSize: '14px', color: colors.textMuted, marginBottom: '18px' }}>{t('Elige el formato según dónde vas a usar el cronograma.', 'Choose the format based on where you will use the schedule.')}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+              {[
+                { key: 'pdf', label: 'PDF', badge: t('Con membrete', 'With letterhead'), text: t('Anexo con el logo de Ecosat, el nombre del proyecto, su duración y pie de página.', 'Appendix with the Ecosat logo, the project name, its duration and a footer.') },
+                { key: 'docx', label: 'Word', badge: t('Sin membrete', 'No letterhead'), text: t('Archivo .docx con el cronograma, los entregables y las notas, listo para copiar a otro documento.', '.docx file with the schedule, deliverables and notes, ready to copy into another document.') },
+                { key: 'png', label: t('Imagen PNG', 'PNG image'), badge: exportStyle === 'corporate' ? t('Con membrete', 'With letterhead') : t('Sin membrete', 'No letterhead'), text: t('Imagen para pegar en un SOW, contrato o presentación.', 'Image to paste into a SOW, contract or presentation.') },
+              ].map((opt) => (
+                <div key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', borderRadius: '12px', border: `1.5px solid ${colors.inputBorder}` }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ font: `700 15px ${fonts.body}`, color: colors.text }}>{opt.label}</span>
+                      <span style={{ font: `600 11px ${fonts.body}`, padding: '2px 8px', borderRadius: '999px', background: colors.primaryTint, color: colors.primaryDark }}>{opt.badge}</span>
+                    </div>
+                    <div style={{ font: `400 13px ${fonts.body}`, color: colors.textMuted, marginTop: '3px', lineHeight: 1.4 }}>{opt.text}</div>
+                    {opt.key === 'png' && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', font: `500 13px ${fonts.body}`, color: colors.text, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-testid="export-png-membrete"
+                          checked={exportStyle === 'corporate'}
+                          disabled={!!exporting}
+                          onChange={(e) => setExportStyle(e.target.checked ? 'corporate' : 'insert')}
+                        />
+                        {t('Incluir membrete de Ecosat', 'Include Ecosat letterhead')}
+                      </label>
+                    )}
+                  </div>
+                  <button
+                    data-testid={`export-${opt.key}`}
+                    onClick={() => runExport(opt.key)}
+                    disabled={!!exporting}
+                    style={{ flexShrink: 0, background: opt.key === 'pdf' ? colors.primaryStrong : 'transparent', color: opt.key === 'pdf' ? '#fff' : colors.primaryDark, border: opt.key === 'pdf' ? 'none' : `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 16px', font: `600 14px ${fonts.body}`, cursor: 'pointer', opacity: exporting && exporting !== opt.key ? 0.5 : 1, minWidth: '112px' }}
+                  >
+                    {exporting === opt.key ? t('Generando…', 'Generating…') : t('Descargar', 'Download')}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {exportError && <div role="alert" style={{ color: colors.danger, fontFamily: fonts.body, fontSize: '14px', marginBottom: '14px' }}>{exportError}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setExportOpen(false)}
+                disabled={!!exporting}
+                style={{ background: 'transparent', color: colors.primaryDark, border: `1.5px solid ${colors.primary}`, borderRadius: '10px', padding: '9px 17px', font: `600 15px ${fonts.body}`, cursor: 'pointer' }}
+              >
+                {t('Cerrar', 'Close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={confirmDelete.childCount > 0 ? t('Eliminar fase con subtareas', 'Delete phase with subtasks') : t('Eliminar fila', 'Delete row')}
+          message={
+            confirmDelete.childCount > 0
+              ? t(`Se eliminará "${confirmDelete.name}" y sus ${confirmDelete.childCount} subtarea${confirmDelete.childCount === 1 ? '' : 's'}. Esta acción no se puede deshacer.`, `"${confirmDelete.name}" and its ${confirmDelete.childCount} subtask${confirmDelete.childCount === 1 ? '' : 's'} will be deleted. This action cannot be undone.`)
+              : t(`Se eliminará "${confirmDelete.name}". Esta acción no se puede deshacer.`, `"${confirmDelete.name}" will be deleted. This action cannot be undone.`)
+          }
+          confirmLabel={t('Eliminar', 'Delete')}
+          onConfirm={confirmDeleteTask}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
 
       {colorPickerFor && (
         <ColorPicker
@@ -686,24 +1154,24 @@ export default function ProjectDetail() {
       {customizeOpen && (
         <div
           onClick={() => setCustomizeOpen(false)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(15,26,22,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}
+          style={{ position: 'fixed', inset: 0, background: colors.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ background: colors.surface, borderRadius: '14px', padding: '24px', width: '340px', boxShadow: '0 8px 24px rgba(15,26,22,.18)' }}
+            style={{ background: colors.surface, borderRadius: '14px', padding: '24px', width: '340px', boxShadow: `0 8px 24px ${colors.shadow}` }}
           >
             <div style={{ fontFamily: fonts.heading, fontWeight: 700, fontSize: '18px', color: colors.text, marginBottom: '18px' }}>
-              Personalizar tablas
+              {t('Colores de tabla', 'Table colors')}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '8px' }}>Color de cabeceras</label>
+                <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '8px' }}>{t('Color de cabecera', 'Header color')}</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <input
                     type="color"
                     value={headerBg}
                     onChange={(e) => patchProject({ headerBg: e.target.value })}
-                    style={{ width: '52px', height: '36px', padding: 0, border: `1.5px solid ${colors.border}`, borderRadius: '8px', background: colors.surface, cursor: 'pointer' }}
+                    style={{ width: '52px', height: '36px', padding: 0, border: `1.5px solid ${colors.inputBorder}`, borderRadius: '8px', background: colors.surface, cursor: 'pointer' }}
                   />
                   <input
                     type="text"
@@ -712,18 +1180,18 @@ export default function ProjectDetail() {
                       const v = e.target.value.trim();
                       if (/^#[0-9a-fA-F]{6}$/.test(v)) patchProject({ headerBg: v });
                     }}
-                    style={{ flex: 1, minWidth: 0, padding: '9px 12px', border: `1.5px solid ${colors.border}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, textTransform: 'uppercase' }}
+                    style={{ flex: 1, minWidth: 0, padding: '9px 12px', border: `1.5px solid ${colors.inputBorder}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, textTransform: 'uppercase' }}
                   />
                 </div>
               </div>
               <div>
-                <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '8px' }}>Color de la fuente</label>
+                <label style={{ display: 'block', font: `600 13px ${fonts.body}`, color: colors.textMuted, marginBottom: '8px' }}>{t('Color del texto de cabecera', 'Header text color')}</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <input
                     type="color"
                     value={headerFg}
                     onChange={(e) => patchProject({ headerFg: e.target.value })}
-                    style={{ width: '52px', height: '36px', padding: 0, border: `1.5px solid ${colors.border}`, borderRadius: '8px', background: colors.surface, cursor: 'pointer' }}
+                    style={{ width: '52px', height: '36px', padding: 0, border: `1.5px solid ${colors.inputBorder}`, borderRadius: '8px', background: colors.surface, cursor: 'pointer' }}
                   />
                   <input
                     type="text"
@@ -732,32 +1200,35 @@ export default function ProjectDetail() {
                       const v = e.target.value.trim();
                       if (/^#[0-9a-fA-F]{6}$/.test(v)) patchProject({ headerFg: v });
                     }}
-                    style={{ flex: 1, minWidth: 0, padding: '9px 12px', border: `1.5px solid ${colors.border}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, textTransform: 'uppercase' }}
+                    style={{ flex: 1, minWidth: 0, padding: '9px 12px', border: `1.5px solid ${colors.inputBorder}`, borderRadius: '8px', fontFamily: fonts.body, fontSize: '14px', color: colors.text, textTransform: 'uppercase' }}
                   />
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', font: `500 13px ${fonts.body}`, color: colors.textMuted }}>
                 <span style={rowTintPreviewStyle} />
-                Filas principales del Cronograma
+                {t('Filas principales del Cronograma', 'Main rows of the Schedule')}
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '22px' }}>
               <button
-                onClick={() => patchProject({ headerBg: '#F5F8F7', headerFg: '#475A52' })}
+                onClick={() => patchProject({ headerBg: '#0C5641', headerFg: '#FFFFFF' })}
                 style={{ background: 'transparent', color: colors.textMuted, border: 'none', font: `600 14px ${fonts.body}`, cursor: 'pointer' }}
               >
-                Restablecer
+                {t('Restablecer', 'Reset')}
               </button>
               <button
                 onClick={() => setCustomizeOpen(false)}
-                style={{ background: colors.primary, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 18px', font: `600 15px ${fonts.body}`, cursor: 'pointer' }}
+                style={{ background: colors.primaryStrong, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 18px', font: `600 15px ${fonts.body}`, cursor: 'pointer' }}
               >
-                Listo
+                {t('Listo', 'Done')}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {membersOpen && <MembersModal projectId={id} isOwner={isOwner} onClose={() => setMembersOpen(false)} onChanged={setMembers} />}
+      {changesOpen && <ChangesModal projectId={id} onClose={() => setChangesOpen(false)} />}
     </div>
   );
 }

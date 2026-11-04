@@ -1,3 +1,5 @@
+import { getLocale, getLang, tr } from './lang.js';
+
 export function lightenColor(hex, amount) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -115,7 +117,7 @@ export function offsetDate(baseDate, offsetUnits, unit, excludeWeekends) {
 }
 
 export function formatDate(date) {
-  return date.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return date.toLocaleDateString(getLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 export function computeSchedule(tasks) {
@@ -154,7 +156,17 @@ export function getParentBounds(taskId, tasks) {
 const ORDINAL_LABELS = { 1: '1er', 2: '2do', 3: '3er', 4: '4to', 5: '5to', 6: '6to', 7: '7mo', 8: '8vo', 9: '9no', 10: '10mo', 11: '11vo', 12: '12vo' };
 
 export function ordinalLabel(n) {
+  if (getLang() === 'en') {
+    const mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+    const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th';
+    return `${n}${suffix}`;
+  }
   return ORDINAL_LABELS[n] || `${n}º`;
+}
+
+export function deliverableMarkerLabel(n) {
+  return `${ordinalLabel(n)} ${tr('Entregable', 'Deliverable')}`;
 }
 
 export function computeDeliverableLanes(deliverables, cellWidth) {
@@ -165,7 +177,7 @@ export function computeDeliverableLanes(deliverables, cellWidth) {
     .map((d, i) => ({ i, pos: typeof d.position === 'number' ? d.position : 0 }))
     .sort((a, b) => a.pos - b.pos)
     .forEach(({ i, pos }) => {
-      const title = `${ordinalLabel(i + 1)} Entregable`;
+      const title = deliverableMarkerLabel(i + 1);
       const w = title.length * 6.4 + 20;
       const left = pos * cellWidth - w / 2;
       let lane = 0;
@@ -182,47 +194,77 @@ export function shadeInterval(unit, excludeWeekends) {
   return excludeWeekends ? 5 : 7;
 }
 
-export function buildShadeGradient(cellWidth, maxEnd, unit, excludeWeekends) {
+export function buildShadeGradient(cellWidth, maxEnd, unit, excludeWeekends, isDark = false) {
   const interval = shadeInterval(unit, excludeWeekends);
   if (maxEnd < interval) return 'none';
   const stops = [];
   for (let i = 1; i <= maxEnd; i++) {
-    const color = i % interval === 0 ? 'rgba(15,26,22,0.09)' : 'rgba(15,26,22,0)';
+    const tone = isDark ? '255,255,255' : '15,26,22';
+    const color = i % interval === 0 ? `rgba(${tone},${isDark ? 0.07 : 0.09})` : `rgba(${tone},0)`;
     stops.push(`${color} ${(i - 1) * cellWidth}px`, `${color} ${i * cellWidth}px`);
   }
   return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
-export function buildMiniGanttRows(tasks) {
-  if (!tasks || !tasks.length) return [];
-  const scheduled = computeSchedule(tasks);
-  const maxEnd = Math.max(1, ...scheduled.map((t) => t.end));
-  const cellPct = 100 / maxEnd;
-  const gridImage = `repeating-linear-gradient(to right, transparent 0, transparent ${cellPct - 2}%, #ECF1EF ${cellPct - 2}%, #ECF1EF ${cellPct}%)`;
-  return scheduled.slice(0, 6).map((t) => {
-    const level = taskLevel(t.id, tasks);
-    const color = level === 0 ? getRootAncestorColor(t, tasks) : lightenColor(getRootAncestorColor(t, tasks), 0.55);
-    return {
-      gridImage,
-      nameStyle: {
-        width: (level > 0 ? 26 : 34) + 'px',
-        marginLeft: level * 6 + 'px',
-        height: '8px',
-        borderRadius: '2px',
-        background: '#E2E8E5',
-        flexShrink: 0,
-      },
-      barStyle: {
-        position: 'absolute',
-        top: 0,
-        left: (t.start / maxEnd) * 100 + '%',
-        width: Math.max(6, (t.duration / maxEnd) * 100) + '%',
-        height: '10px',
-        borderRadius: '3px',
-        background: color,
-      },
-    };
-  });
+export const FIXED_BASE_WIDTH = 434; // asa + # + nombre + duración
+export const EXTRA_COLUMN_WIDTHS = [92, 92, 92, 140]; // Depende de, Fecha inicio, Fecha fin, Responsable
+export const MAX_COLUMN_LEVEL = EXTRA_COLUMN_WIDTHS.length;
+
+export function clampColumnLevel(level) {
+  const n = Number(level);
+  if (!Number.isFinite(n)) return MAX_COLUMN_LEVEL;
+  return Math.max(0, Math.min(MAX_COLUMN_LEVEL, Math.round(n)));
+}
+
+export function fixedColsWidth(level) {
+  return FIXED_BASE_WIDTH + EXTRA_COLUMN_WIDTHS.slice(0, clampColumnLevel(level)).reduce((a, b) => a + b, 0);
+}
+
+// Mezcla `top` sobre `base` (ambos #RRGGBB): amount=1 devuelve top, amount=0 devuelve base.
+export function mixColors(top, base, amount) {
+  const parse = (hex) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+    const n = parseInt(m ? m[1] : 'FFFFFF', 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const a = parse(top);
+  const b = parse(base);
+  const out = a.map((v, i) => Math.round(b[i] * (1 - amount) + v * amount));
+  return '#' + out.map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+export function isPaleColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+  if (!m) return true;
+  const n = parseInt(m[1], 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.85;
+}
+
+const UNIT_LABELS = { Días: ['día', 'días'], Semanas: ['semana', 'semanas'], Meses: ['mes', 'meses'] };
+const UNIT_LABELS_EN = { Días: ['day', 'days'], Semanas: ['week', 'weeks'], Meses: ['month', 'months'] };
+
+export function durationLabel(units, unit) {
+  if (!units) return '—';
+  const labels = getLang() === 'en' ? UNIT_LABELS_EN : UNIT_LABELS;
+  const [one, many] = labels[unit] || labels['Días'];
+  return `${units} ${units === 1 ? one : many}`;
+}
+
+export function formatShortDate(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(getLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+export function computeProjectSpan(project) {
+  const tasks = (project && project.tasks) || [];
+  const units = tasks.length ? Math.max(0, ...computeSchedule(tasks).map((t) => t.end)) : 0;
+  let endDate = null;
+  if (project && project.startDate && units > 0) {
+    endDate = offsetDate(new Date(project.startDate + 'T00:00:00'), units, project.unit || 'Días', !!project.excludeWeekends);
+  }
+  return { units, endDate };
 }
 
 export function computeProjectEndDateLabel(project) {

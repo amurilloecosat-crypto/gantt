@@ -1,17 +1,20 @@
 import React from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext.jsx';
+import { OnboardingProvider } from './onboarding/OnboardingContext.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
 import { colors, fonts } from './theme.js';
+import { useI18n } from './i18n.jsx';
 
 function RequireAuth({ children }) {
   const { user, loading } = useAuth();
+  const { t } = useI18n();
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.textMuted, fontFamily: fonts.body }}>
-        Cargando...
+        {t('Cargando...', 'Loading...')}
       </div>
     );
   }
@@ -48,7 +51,9 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <OnboardingProvider>
+        <AppRoutes />
+      </OnboardingProvider>
     </AuthProvider>
   );
 }
