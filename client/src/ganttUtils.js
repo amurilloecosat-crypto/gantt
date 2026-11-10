@@ -257,6 +257,49 @@ export function formatShortDate(value) {
   return d.toLocaleDateString(getLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+// Reordenar filas arrastrando conserva el nivel: un ítem raíz solo se mueve entre raíces y un sub-ítem solo
+// entre los hermanos de su padre. Un grupo desplegado se salta completo: hacia abajo el ítem cae después de
+// la última fila visible del grupo (cursor en su mitad inferior); hacia arriba, antes de la fila padre
+// (cursor en su mitad superior). Devuelve la nueva lista de tareas, o null si no hay cambio.
+export function moveRowOnDragOver(tasks, draggingId, targetIndex, inLowerHalf, collapsedIds) {
+  const sourceIndex = tasks.findIndex((t) => t.id === draggingId);
+  if (sourceIndex === -1 || sourceIndex === targetIndex || !tasks[targetIndex]) return null;
+
+  const subtreeIdx = getSubtreeIndices(sourceIndex, tasks);
+  if (subtreeIdx.includes(targetIndex)) return null;
+
+  const sourceTask = tasks[sourceIndex];
+  let anchor = tasks[targetIndex];
+  while (anchor && (anchor.parentId || null) !== (sourceTask.parentId || null)) {
+    const parentId = anchor.parentId;
+    anchor = parentId ? tasks.find((t) => t.id === parentId) : null;
+  }
+  if (!anchor) return null;
+  const anchorIndex = tasks.findIndex((t) => t.id === anchor.id);
+  if (anchorIndex === sourceIndex) return null;
+
+  const anchorSubtree = getSubtreeIndices(anchorIndex, tasks);
+  const visibleRows = anchorSubtree.filter((i) => !getAncestorIds(tasks[i].id, tasks).some((aid) => collapsedIds.has(aid)));
+  const lastVisible = visibleRows[visibleRows.length - 1];
+  const movingDown = sourceIndex < anchorIndex;
+  if (movingDown) {
+    if (targetIndex !== lastVisible || !inLowerHalf) return null;
+  } else if (targetIndex !== anchorIndex || inLowerHalf) {
+    return null;
+  }
+
+  const block = subtreeIdx.map((i) => tasks[i]);
+  const remaining = tasks.filter((_, i) => !subtreeIdx.includes(i));
+  const anchorPos = remaining.findIndex((t) => t.id === anchor.id);
+  let insertAt = anchorPos;
+  if (movingDown) {
+    const anchorBlock = getSubtreeIndices(anchorPos, remaining);
+    insertAt = anchorBlock[anchorBlock.length - 1] + 1;
+  }
+  remaining.splice(insertAt, 0, ...block);
+  return remaining;
+}
+
 export function computeProjectSpan(project) {
   const tasks = (project && project.tasks) || [];
   const units = tasks.length ? Math.max(0, ...computeSchedule(tasks).map((t) => t.end)) : 0;

@@ -17,7 +17,7 @@ import { useI18n, tr } from '../i18n.jsx';
 import { supabase } from '../supabaseClient';
 import { diffProject, mergeProject, projectsEqual, stripHtml } from '../collab.js';
 import { colors, fonts } from '../theme.js';
-import { clampColumnLevel, computeProjectEndDateLabel, computeProjectSpan, computeSchedule, durationLabel, fixedColsWidth, formatShortDate, getParentBounds, getSubtreeIndices, hasChildren, isPaleColor, lightenColor, taskLevel } from '../ganttUtils.js';
+import { clampColumnLevel, computeProjectEndDateLabel, computeProjectSpan, computeSchedule, durationLabel, fixedColsWidth, formatShortDate, getParentBounds, getSubtreeIndices, hasChildren, isPaleColor, lightenColor, moveRowOnDragOver, taskLevel } from '../ganttUtils.js';
 
 const COLUMN_LEVEL_KEY = 'ariadna.columnLevel';
 const EXPORT_STYLE_KEY = 'ariadna.exportStyle';
@@ -354,28 +354,12 @@ export default function ProjectDetail() {
     e.preventDefault();
     const draggingId = dragSourceId.current;
     if (!draggingId) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const inLowerHalf = e.clientY > rect.top + rect.height / 2;
     setProject((prev) => {
-      const tasks = prev.tasks;
-      const sourceIndex = tasks.findIndex((t) => t.id === draggingId);
-      if (sourceIndex === -1 || sourceIndex === targetIndex) return prev;
-
-      const subtreeIdx = getSubtreeIndices(sourceIndex, tasks);
-      if (subtreeIdx.includes(targetIndex)) return prev;
-
-      const sourceTask = tasks[sourceIndex];
-      const targetTask = tasks[targetIndex];
-      const sourceIsParent = sourceTask.parentId !== null || hasChildren(sourceTask.id, tasks);
-      if (sourceIsParent && targetTask.parentId !== sourceTask.parentId) return prev;
-
-      const block = subtreeIdx.map((i) => tasks[i]);
-      const remaining = tasks.filter((_, i) => !subtreeIdx.includes(i));
-      let insertAt = remaining.findIndex((t) => t.id === targetTask.id);
-      if (insertAt === -1) insertAt = remaining.length;
-
-      block[0] = { ...block[0], parentId: targetTask.parentId };
-      remaining.splice(insertAt, 0, ...block);
-
-      const next = { ...prev, tasks: remaining };
+      const nextTasks = moveRowOnDragOver(prev.tasks, draggingId, targetIndex, inLowerHalf, collapsedIds);
+      if (!nextTasks) return prev;
+      const next = { ...prev, tasks: nextTasks };
       scheduleSave(next);
       return next;
     });
