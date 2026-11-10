@@ -173,6 +173,21 @@ export const api = {
     throw new Error(tr('Alguien editó este proyecto al mismo tiempo y no pudimos combinar los cambios. Recarga la página para ver la última versión.', "Someone edited this project at the same time and we couldn't merge the changes. Reload the page to see the latest version."));
   },
 
+  // Plantilla personal de notas (una por usuario). Devuelve el HTML o null si aún no existe.
+  async getNotesTemplate() {
+    const { data, error } = await supabase.from('user_note_templates').select('html').maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ? data.html : null;
+  },
+
+  async saveNotesTemplate(html) {
+    const userId = await requireUserId();
+    const { error } = await supabase
+      .from('user_note_templates')
+      .upsert({ user_id: userId, html: String(html), updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (error) throw new Error(error.message);
+  },
+
   async getProjectUpdatedAt(id) {
     const { data, error } = await supabase.from('projects').select('updated_at').eq('id', id).maybeSingle();
     if (error) throw new Error(error.message);
